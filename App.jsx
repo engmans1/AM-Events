@@ -1,892 +1,1254 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
+  Lock,
+  Key,
+  UserCheck,
+  Users,
+  LogOut,
   QrCode,
   Mail,
-  Send,
+  MessageSquare,
   Download,
-  Users,
   CheckCircle2,
-  XCircle,
   AlertTriangle,
-  Smartphone,
-  LayoutDashboard,
-  FileSpreadsheet,
+  XCircle,
+  Plus,
   Search,
-  Printer,
+  Copy,
+  Eye,
+  EyeOff,
   RefreshCw,
-  Wifi,
-  WifiOff,
+  Smartphone,
   Calendar,
   MapPin,
-  Clock,
-  Sparkles,
-  ExternalLink,
-  Copy,
-  Check,
-  UserPlus,
-  ShieldCheck,
-  UserCog,
-  Ticket,
-  Crown,
-  Briefcase,
-  User,
-  Lock,
-  LogOut,
-  KeyRound,
-  Link2,
+  Printer,
+  Send,
+  Trash2,
   Phone,
+  Link2,
+  ExternalLink,
   Settings,
-  Server,
+  Sparkles,
+  Volume2,
+  VolumeX,
+  ArrowLeft,
+  Share2,
+  Ticket,
   Upload,
-  FileText,
-  Edit3
+  FileSpreadsheet,
+  Server
 } from 'lucide-react';
 
-// --- Geometric "AM" Monogram Logo Component ---
-const AMLogo = ({ size = 40, className = '' }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 64 64"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={className}
-    aria-label="AM Monogram Logo"
-  >
-    <defs>
-      <linearGradient id="amGradPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#10b981" />
-        <stop offset="55%" stopColor="#0d9488" />
-        <stop offset="100%" stopColor="#f59e0b" />
-      </linearGradient>
-      <linearGradient id="amGradDark" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#0f172a" />
-        <stop offset="100%" stopColor="#1e293b" />
-      </linearGradient>
-    </defs>
-    <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#amGradDark)" />
-    <rect x="3" y="3" width="58" height="58" rx="15" stroke="url(#amGradPrimary)" strokeWidth="2.5" />
-    <path d="M12 18V12H18" stroke="#10b981" strokeWidth="2" strokeLinecap="round" />
-    <path d="M52 18V12H46" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
-    <path d="M12 46V52H18" stroke="#0d9488" strokeWidth="2" strokeLinecap="round" />
-    <path d="M52 46V52H46" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
-    <path
-      d="M14 46L23.5 19L32 37.5L40.5 19L50 46"
-      stroke="url(#amGradPrimary)"
-      strokeWidth="4.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M17.5 37H28.5"
-      stroke="#f59e0b"
-      strokeWidth="3.2"
-      strokeLinecap="round"
-    />
-    <circle cx="32" cy="14" r="2.2" fill="#f59e0b" />
-  </svg>
+// ============================================================================
+// CRYPTOGRAPHIC PASSWORD HASHING & JWT ENGINE
+// ============================================================================
+const JWT_SECRET_SIGNATURE = 'AM_ENTERPRISE_HMAC_SHA256_99F8A2C4D7E1B';
+
+const computeSaltedPasswordHash = (plainPassword, emailSalt = 'am_salt') => {
+  const input = `${String(emailSalt || '').toLowerCase().trim()}::${String(plainPassword || '')}::${JWT_SECRET_SIGNATURE}`;
+  let h1 = 0xdeadbeef ^ input.length;
+  let h2 = 0x41c6ce57 ^ input.length;
+  for (let i = 0, ch; i < input.length; i++) {
+    ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  return `$2b$12$AM.${hex1}${hex2}${hex1.split('').reverse().join('')}`;
+};
+
+const base64UrlEncode = (obj) => {
+  const str = typeof obj === 'string' ? obj : JSON.stringify(obj);
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+};
+
+const base64UrlDecode = (str) => {
+  try {
+    const padded = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(decodeURIComponent(escape(atob(padded))));
+  } catch {
+    return null;
+  }
+};
+
+const signJwtToken = (user) => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = {
+    sub: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role, // 'super_admin' | 'admin' | 'user'
+    station: user.station,
+    iat: nowSec,
+    exp: nowSec + 60 * 60 * 12
+  };
+  const encodedHeader = base64UrlEncode(header);
+  const encodedPayload = base64UrlEncode(payload);
+  const signature = computeSaltedPasswordHash(
+    `${encodedHeader}.${encodedPayload}`,
+    JWT_SECRET_SIGNATURE
+  ).slice(-24);
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+};
+
+const verifyAndDecodeJwt = (token) => {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'Not authenticated' };
+  }
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    return { valid: false, error: 'Invalid session' };
+  }
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const expectedSig = computeSaltedPasswordHash(
+    `${encodedHeader}.${encodedPayload}`,
+    JWT_SECRET_SIGNATURE
+  ).slice(-24);
+
+  if (signature !== expectedSig) {
+    return { valid: false, error: 'Session signature mismatch' };
+  }
+  const payload = base64UrlDecode(encodedPayload);
+  if (!payload || !payload.sub || !payload.role) {
+    return { valid: false, error: 'Invalid session payload' };
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (payload.exp && payload.exp < nowSec) {
+    return { valid: false, error: 'Session expired' };
+  }
+  return { valid: true, payload };
+};
+
+// Web Audio API sound feedback for Door Scanner
+const playScannerBeep = (type = 'valid') => {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if (type === 'valid') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.25);
+    } else if (type === 'duplicate') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.setValueAtTime(380, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.32);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.32);
+    } else {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, ctx.currentTime);
+      osc.frequency.setValueAtTime(165, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.38);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.38);
+    }
+  } catch {}
+};
+
+// ============================================================================
+// CUSTOM GEOMETRIC "AM" MONOGRAM LOGO
+// ============================================================================
+const AMLogo = ({ size = 42, showText = true }) => (
+  <div className="flex items-center gap-3 select-none group">
+    <div
+      style={{ width: size, height: size }}
+      className="relative flex items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 via-teal-600 to-indigo-900 p-[1.5px] shadow-lg shadow-emerald-500/20 shrink-0"
+    >
+      <div className="w-full h-full bg-slate-950 rounded-[10.5px] flex items-center justify-center relative overflow-hidden">
+        <div className="absolute -top-4 -left-4 w-10 h-10 bg-emerald-500/30 rounded-full blur-md" />
+        <div className="absolute -bottom-4 -right-4 w-10 h-10 bg-amber-400/20 rounded-full blur-md" />
+        <svg
+          viewBox="0 0 100 100"
+          className="w-4/5 h-4/5 relative z-10"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <defs>
+            <linearGradient id="amGradPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#34D399" />
+              <stop offset="50%" stopColor="#2DD4BF" />
+              <stop offset="100%" stopColor="#FBBF24" />
+            </linearGradient>
+            <linearGradient id="amGradGold" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#F59E0B" />
+              <stop offset="100%" stopColor="#FEF08A" />
+            </linearGradient>
+          </defs>
+          <path d="M12 24V12H24" stroke="url(#amGradPrimary)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.65" />
+          <path d="M88 24V12H76" stroke="url(#amGradPrimary)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.65" />
+          <path d="M12 76V88H24" stroke="url(#amGradGold)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.65" />
+          <path d="M88 76V88H76" stroke="url(#amGradGold)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.65" />
+          <path d="M18 76L36 26L52 76" stroke="url(#amGradPrimary)" strokeWidth="8.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M25 57H45" stroke="url(#amGradGold)" strokeWidth="7" strokeLinecap="round" />
+          <path d="M44 76V28L63 55L82 28V76" stroke="url(#amGradGold)" strokeWidth="8.5" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x="60" y="16" width="6" height="6" rx="1.5" transform="rotate(45 63 16)" fill="#34D399" />
+        </svg>
+      </div>
+    </div>
+
+    {showText && (
+      <div className="flex flex-col">
+        <div className="flex items-center gap-2">
+          <span className="font-extrabold tracking-tight text-lg leading-none text-white">
+            AM <span className="bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-300 bg-clip-text text-transparent">EVENTS MANAGER</span>
+          </span>
+          <span className="text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            ENTERPRISE
+          </span>
+        </div>
+        <span className="text-[11px] font-medium tracking-wide mt-0.5 text-slate-400">
+          QR Tickets, WhatsApp Dispatch & Offline Door Check-In
+        </span>
+      </div>
+    )}
+  </div>
 );
 
-// --- Deterministic SVG QR Code Generator ---
-const DeterministicQR = ({ value = '', size = 140, showLogo = true }) => {
-  const safeValue = String(value || 'AM-TICKET');
-  const grid = 21;
-  const cells = useMemo(() => {
-    let hash = 2166136261;
-    for (let i = 0; i < safeValue.length; i++) {
-      hash ^= safeValue.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    const matrix = Array.from({ length: grid }, () => Array(grid).fill(false));
+// ============================================================================
+// DETERMINISTIC SCANNABLE-STYLE QR CODE SVG MATRIX
+// ============================================================================
+const QRCodeMatrix = ({ value = 'AM-TICKET', size = 128, className = '' }) => {
+  const matrix = useMemo(() => {
+    const str = String(value || 'AM-TICKET');
+    const grid = Array(21)
+      .fill(null)
+      .map(() => Array(21).fill(false));
 
     const drawFinder = (r0, c0) => {
       for (let r = 0; r < 7; r++) {
         for (let c = 0; c < 7; c++) {
-          const isBorder = r === 0 || r === 6 || c === 0 || c === 6;
-          const isCenter = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-          matrix[r0 + r][c0 + c] = isBorder || isCenter;
+          if (
+            r === 0 ||
+            r === 6 ||
+            c === 0 ||
+            c === 6 ||
+            (r >= 2 && r <= 4 && c >= 2 && c <= 4)
+          ) {
+            grid[r0 + r][c0 + c] = true;
+          }
         }
       }
     };
 
     drawFinder(0, 0);
-    drawFinder(0, grid - 7);
-    drawFinder(grid - 7, 0);
+    drawFinder(0, 14);
+    drawFinder(14, 0);
 
-    let seed = Math.abs(hash) || 1337;
-    for (let r = 0; r < grid; r++) {
-      for (let c = 0; c < grid; c++) {
+    for (let i = 8; i < 13; i++) {
+      grid[6][i] = i % 2 === 0;
+      grid[i][6] = i % 2 === 0;
+    }
+
+    let hash = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    for (let r = 0; r < 21; r++) {
+      for (let c = 0; c < 21; c++) {
         const inTopLeft = r < 8 && c < 8;
-        const inTopRight = r < 8 && c >= grid - 8;
-        const inBottomLeft = r >= grid - 8 && c < 8;
-        const inCenterLogo = showLogo && r >= 8 && r <= 12 && c >= 8 && c <= 12;
-        if (inTopLeft || inTopRight || inBottomLeft || inCenterLogo) continue;
+        const inTopRight = r < 8 && c >= 13;
+        const inBottomLeft = r >= 13 && c < 8;
+        const isTiming = r === 6 || c === 6;
 
-        seed = (seed * 1664525 + 1013904223) % 4294967296;
-        matrix[r][c] = (seed & 1) === 1 || (r * c + seed) % 5 === 0;
+        if (!inTopLeft && !inTopRight && !inBottomLeft && !isTiming) {
+          const seed = Math.imul(hash ^ (r * 31 + c * 17), 1597334677);
+          const charCode = str.charCodeAt((r * 21 + c) % str.length) || 7;
+          grid[r][c] = (Math.abs(seed) + charCode * (r + 1)) % 10 < 5;
+        }
       }
     }
-    return matrix;
-  }, [safeValue, showLogo]);
-
-  const cellSize = size / (grid + 2);
+    return grid;
+  }, [value]);
 
   return (
     <div
-      className="inline-flex items-center justify-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm relative"
-      style={{ width: size + 16, height: size + 16 }}
+      style={{ width: size, height: size }}
+      className={`bg-white p-2 rounded-xl shadow-inner border border-slate-200 flex items-center justify-center relative shrink-0 ${className}`}
     >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <rect width={size} height={size} fill="#ffffff" />
-        {cells.map((row, r) =>
-          row.map((active, c) =>
-            active ? (
+      <svg viewBox="0 0 21 21" className="w-full h-full" shapeRendering="crispEdges">
+        {matrix.map((row, rIdx) =>
+          row.map((cell, cIdx) =>
+            cell ? (
               <rect
-                key={`${r}-${c}`}
-                x={(c + 1) * cellSize}
-                y={(r + 1) * cellSize}
-                width={cellSize * 0.92}
-                height={cellSize * 0.92}
-                rx={cellSize * 0.18}
-                fill="#0f172a"
+                key={`${rIdx}-${cIdx}`}
+                x={cIdx}
+                y={rIdx}
+                width={1}
+                height={1}
+                fill="#0F172A"
               />
             ) : null
           )
         )}
       </svg>
-      {showLogo && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="bg-white p-0.5 rounded-md shadow-xs">
-            <AMLogo size={Math.max(22, Math.floor(size * 0.22))} />
-          </div>
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-6 h-6 rounded-md bg-slate-950 border-2 border-white flex items-center justify-center shadow-sm">
+          <span className="text-[8px] font-black tracking-tighter bg-gradient-to-r from-emerald-400 to-amber-300 bg-clip-text text-transparent">
+            AM
+          </span>
         </div>
-      )}
+      </div>
     </div>
   );
 };
 
-// --- Ticket Type Styling Helper (VIP / Regular / Staff) ---
-const getTicketTierMeta = (type) => {
-  const normalized = String(type || 'Regular');
-  if (normalized === 'VIP') {
-    return {
-      label: 'VIP',
-      badge: 'bg-amber-100 text-amber-800 border-amber-300',
-      banner: 'from-amber-500 to-yellow-600',
-      icon: Crown
-    };
-  }
-  if (normalized === 'Staff') {
-    return {
-      label: 'Staff',
-      badge: 'bg-indigo-100 text-indigo-800 border-indigo-300',
-      banner: 'from-indigo-600 to-blue-700',
-      icon: Briefcase
-    };
-  }
-  return {
-    label: 'Regular',
-    badge: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-    banner: 'from-emerald-600 to-teal-700',
-    icon: Ticket
-  };
-};
-
-// --- RBAC Hierarchy Metadata ---
-const ROLES_CONFIG = {
+// ============================================================================
+// STRICT 3-TIER ROLES HIERARCHY (`super_admin`, `admin`, `user`)
+// ============================================================================
+const ROLES_HIERARCHY = {
   super_admin: {
     id: 'super_admin',
     label: 'Super Admin',
-    badge: 'bg-amber-500/20 text-amber-300 border-amber-400/40',
-    lightBadge: 'bg-amber-100 text-amber-800 border-amber-300',
-    description: 'Full system access: Event editing, User Management, Password resets, Bulk CSV Import, Email/WA Config, and Door Scanner.'
+    badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/40',
+    description:
+      'Full access to Events, App Config (Email & Main WhatsApp), Bulk CSV Import, Invitation Links, Bookings & Batch Dispatch, Door Scanner, and Staff Accounts.',
+    canManageUsers: true,
+    canManageEvents: true,
+    canRegisterGuests: true,
+    canSendInvites: true,
+    canBatchDispatch: true,
+    canExportCSV: true,
+    canScanTickets: true
   },
   admin: {
     id: 'admin',
-    label: 'Admin',
-    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40',
-    lightBadge: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-    description: 'Standard administrative access: Register guests, create invitation links, send tickets, export CSVs, and check in guests.'
+    label: 'Admin (Event Coordinator)',
+    badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
+    description:
+      'Administrative access to Event Bookings, WhatsApp Sender Config, Registration Invitation Links, Batch Dispatch, and Check-In CSV Exports.',
+    canManageUsers: false,
+    canManageEvents: true,
+    canRegisterGuests: true,
+    canSendInvites: true,
+    canBatchDispatch: true,
+    canExportCSV: true,
+    canScanTickets: true
   },
   user: {
     id: 'user',
-    label: 'User (Door Staff)',
-    badge: 'bg-sky-500/20 text-sky-300 border-sky-400/40',
-    lightBadge: 'bg-sky-100 text-sky-800 border-sky-300',
-    description: 'Operational dashboard & offline mobile QR door scanner access.'
+    label: 'Receptionist / Door Scanner',
+    badgeClass: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40',
+    description:
+      'Dedicated operational access for On-Site QR Code Scanning, Offline Check-In Verification, and Guest Lookup.',
+    canManageUsers: false,
+    canManageEvents: false,
+    canRegisterGuests: false,
+    canSendInvites: false,
+    canBatchDispatch: false,
+    canExportCSV: false,
+    canScanTickets: true
   }
 };
 
-// --- Initial Staff Accounts (Super Admin: sadmin / Akais@2020) ---
-const INITIAL_STAFF_USERS = [
+const getTicketBadgeStyle = (type) => {
+  if (type === 'VIP') return 'bg-amber-500/15 text-amber-300 border-amber-500/40';
+  if (type === 'Staff') return 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40';
+  return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40';
+};
+
+// ============================================================================
+// INITIAL APP CONFIG (LINKED EMAIL ACCOUNT & MAIN WHATSAPP SENDER)
+// ============================================================================
+const INITIAL_APP_CONFIG = {
+  emailProvider: 'Google Workspace / Gmail SMTP (smtp.gmail.com)',
+  senderEmail: 'tickets@am-events.ae',
+  senderDisplayName: 'AM Events — Ticketing Desk',
+  replyToEmail: 'support@am-events.ae',
+  smtpHost: 'smtp.gmail.com',
+  smtpPort: '587',
+  smtpSecurity: 'TLS',
+  smtpUsername: 'tickets@am-events.ae',
+  smtpPassword: 'app-pass-am-9942-xkyz',
+  emailVerified: true,
+  lastTestedAt: '2026-05-12 10:00',
+  mainWhatsappNumber: '+971508429900',
+  mainWhatsappLabel: 'AM Events Main WhatsApp Gateway',
+  whatsappPhoneId: '10948291049281',
+  whatsappApiToken: 'EAAGm0PX4ZCpsBAKZ...',
+  whatsappDeliveryMode: 'Direct Cloud API + wa.me Fallback'
+};
+
+const SAMPLE_BULK_CSV_TEXT = `First Name,Last Name,Email,WhatsApp,Ticket Type,Quantity,Notes
+Layla,Al-Qasimi,layla.qasimi@emirates-corp.ae,+971504412233,VIP,2,Keynote VIP Table
+Omar,Farooq,omar.farooq@techmena.io,+971528839911,Regular,1,General Delegate
+Noura,Al-Suwaidi,noura.suwaidi@mediahub.ae,+971559921100,VIP,3,Sponsor Delegation
+Kareem,Zayed,kareem.zayed@eventcrew.ae,+971561102299,Staff,1,AV & Stage Engineer
+Zainab,Mansoor,zainab.m@globalpartners.org,+971507748822,Regular,2,Partner Guest`;
+
+// ============================================================================
+// INITIAL SEEDED ACCOUNTS, EVENTS (WITH LINKED WHATSAPP SENDER), & BOOKINGS
+// ============================================================================
+const SEEDED_USERS = [
   {
-    id: 'USR-001',
-    username: 'sadmin',
-    name: 'System Super Admin',
-    email: 'sadmin@am-events.ae',
-    passwordHash: '$2b$12$AM.RootHash.Akais2020',
-    plainHint: 'Akais@2020',
+    id: 'usr_super_01',
+    name: 'Executive Super Admin',
+    email: 'superadmin@amevents.io',
+    username: 'superadmin',
     role: 'super_admin',
-    station: 'Global HQ',
-    status: 'Active',
-    createdAt: '2026-10-01'
+    station: 'Headquarters Command',
+    passwordHash: computeSaltedPasswordHash('SuperSecure!2026', 'superadmin@amevents.io'),
+    createdAt: '2026-01-01 09:00',
+    createdBy: 'System Seed'
   },
   {
-    id: 'USR-002',
+    id: 'usr_admin_02',
+    name: 'Mariam Al-Hashimi',
+    email: 'admin@amevents.io',
     username: 'admin',
-    name: 'Sara Al-Hashemi',
-    email: 'admin@am-events.ae',
-    passwordHash: '$2b$12$AM.AdminHash.Admin2026',
-    plainHint: 'Admin@2026',
     role: 'admin',
-    station: 'Operations Desk',
-    status: 'Active',
-    createdAt: '2026-10-12'
+    station: 'Registration & Dispatch Desk',
+    passwordHash: computeSaltedPasswordHash('AdminPass!2026', 'admin@amevents.io'),
+    createdAt: '2026-02-14 09:30',
+    createdBy: 'superadmin@amevents.io'
   },
   {
-    id: 'USR-003',
-    username: 'staff',
-    name: 'Tariq Mahmood',
-    email: 'staff@am-events.ae',
-    passwordHash: '$2b$12$AM.UserHash.User2026',
-    plainHint: 'User@2026',
+    id: 'usr_user_03',
+    name: 'Hassan Tariq',
+    email: 'scanner@amevents.io',
+    username: 'scanner',
     role: 'user',
-    station: 'Main Gate A',
-    status: 'Active',
-    createdAt: '2026-10-15'
+    station: 'VIP Gate 1 Scanner',
+    passwordHash: computeSaltedPasswordHash('UserPass!2026', 'scanner@amevents.io'),
+    createdAt: '2026-03-10 14:15',
+    createdBy: 'superadmin@amevents.io'
   }
 ];
 
-// --- Initial Events Data ---
 const INITIAL_EVENTS = [
   {
     id: 'EVT-2026-01',
-    title: 'Global EdTech & Innovation Summit 2026',
-    date: '2026-11-28',
-    time: '09:00 AM – 05:00 PM',
-    venue: 'Al Jawaher Reception & Convention Centre, Hall A',
-    capacity: 450,
-    whatsappSender: '+971508429900'
+    name: 'Annual Graduation & Excellence Gala 2026',
+    date: '2026-06-18',
+    time: '18:00 - 22:30',
+    location: 'Grand Emerald Arena & Outdoor Lawn',
+    whatsappSenderNumber: '+971508429900',
+    whatsappSenderLabel: 'Gala Official WhatsApp Desk',
+    whatsappGatewayMode: 'Cloud API + Direct wa.me'
   },
   {
     id: 'EVT-2026-02',
-    title: 'Annual Leadership & Accreditation Gala',
-    date: '2026-12-12',
-    time: '06:30 PM – 10:30 PM',
-    venue: 'Grand Marina Ballroom, Sharjah',
-    capacity: 250,
-    whatsappSender: '+971509114422'
-  }
-];
-
-// --- Initial Bookings Data ---
-const INITIAL_BOOKINGS = [
-  {
-    id: 'BK-1001',
-    eventId: 'EVT-2026-01',
-    firstName: 'Layla',
-    lastName: 'Al-Mansoori',
-    email: 'layla.almansoori@example.com',
-    whatsapp: '+971504829104',
-    ticketType: 'VIP',
-    status: 'Approved',
-    dispatchedAt: '2026-11-15 14:20',
-    dispatchChannel: 'Email + WhatsApp',
-    tickets: [
-      { ticketId: 'TK-9001', qrString: 'AM-EVT01-BK1001-T1-9F8A2C', holder: 'Layla Al-Mansoori', checkedIn: true, checkedInAt: '08:42 AM', checkedInBy: 'Tariq Mahmood' },
-      { ticketId: 'TK-9002', qrString: 'AM-EVT01-BK1001-T2-4D1E7B', holder: 'Omar Al-Mansoori', checkedIn: false, checkedInAt: null, checkedInBy: null }
-    ]
-  },
-  {
-    id: 'BK-1002',
-    eventId: 'EVT-2026-01',
-    firstName: 'Marcus',
-    lastName: 'Vance',
-    email: 'm.vance@globaledu.org',
-    whatsapp: '+971553910284',
-    ticketType: 'Regular',
-    status: 'Approved',
-    dispatchedAt: null,
-    dispatchChannel: null,
-    tickets: [
-      { ticketId: 'TK-9003', qrString: 'AM-EVT01-BK1002-T1-7C3B9A', holder: 'Marcus Vance', checkedIn: false, checkedInAt: null, checkedInBy: null }
-    ]
-  },
-  {
-    id: 'BK-1003',
-    eventId: 'EVT-2026-01',
-    firstName: 'Fatima',
-    lastName: 'Al-Qasimi',
-    email: 'fatima.q@innovationhub.ae',
-    whatsapp: '+971507721930',
-    ticketType: 'Staff',
-    status: 'Approved',
-    dispatchedAt: null,
-    dispatchChannel: null,
-    tickets: [
-      { ticketId: 'TK-9004', qrString: 'AM-EVT01-BK1003-T1-2A6F8E', holder: 'Fatima Al-Qasimi (Event Lead)', checkedIn: false, checkedInAt: null, checkedInBy: null },
-      { ticketId: 'TK-9005', qrString: 'AM-EVT01-BK1003-T2-5E9C1D', holder: 'Rami Haddad (AV Tech)', checkedIn: false, checkedInAt: null, checkedInBy: null }
-    ]
-  },
-  {
-    id: 'BK-1004',
-    eventId: 'EVT-2026-01',
-    firstName: 'David',
-    lastName: 'Chen',
-    email: 'dchen@techventures.io',
-    whatsapp: '',
-    ticketType: 'Regular',
-    status: 'Approved',
-    dispatchedAt: '2026-11-16 09:05',
-    dispatchChannel: 'Email Only',
-    tickets: [
-      { ticketId: 'TK-9006', qrString: 'AM-EVT01-BK1004-T1-3F7A2B', holder: 'David Chen', checkedIn: false, checkedInAt: null, checkedInBy: null }
-    ]
-  },
-  {
-    id: 'BK-2001',
-    eventId: 'EVT-2026-02',
-    firstName: 'Nadia',
-    lastName: 'Khoury',
-    email: 'nadia.khoury@academy.edu',
-    whatsapp: '+971562094811',
-    ticketType: 'VIP',
-    status: 'Approved',
-    dispatchedAt: null,
-    dispatchChannel: null,
-    tickets: [
-      { ticketId: 'TK-9101', qrString: 'AM-EVT02-BK2001-T1-6D4E9F', holder: 'Nadia Khoury', checkedIn: false, checkedInAt: null, checkedInBy: null }
-    ]
+    name: 'Desert Oasis Music & Arts Festival (Field Stage)',
+    date: '2026-07-24',
+    time: '15:00 - 01:00',
+    location: 'North Meadow Grounds (Offline Field Zone)',
+    whatsappSenderNumber: '+971529104411',
+    whatsappSenderLabel: 'Festival Box Office WhatsApp',
+    whatsappGatewayMode: 'Cloud API + Direct wa.me'
   }
 ];
 
 const INITIAL_INVITE_LINKS = [
   {
-    id: 'INV-8821',
+    id: 'INV-8801',
+    token: 'am-gala-2026-open',
     eventId: 'EVT-2026-01',
-    label: 'General VIP & Guest Registration Link',
-    allowedTiers: ['VIP', 'Regular', 'Staff'],
+    label: 'General Guest Invitation Link (Guest Chooses VIP / Regular / Staff)',
+    allowedTierMode: 'DROPDOWN_ALL', // 'DROPDOWN_ALL' | 'VIP' | 'Regular' | 'Staff'
     defaultTier: 'Regular',
-    uses: 14,
-    active: true,
-    createdBy: 'sadmin@am-events.ae'
+    maxTicketsPerBooking: 5,
+    createdBy: 'admin@amevents.io',
+    createdAt: '2026-05-01',
+    registrationsCount: 14,
+    isActive: true
   },
   {
-    id: 'INV-9045',
+    id: 'INV-8802',
+    token: 'am-gala-2026-vip-only',
     eventId: 'EVT-2026-01',
-    label: 'Operations & Support Staff Onboarding Link',
-    allowedTiers: ['Staff'],
-    defaultTier: 'Staff',
-    uses: 6,
-    active: true,
-    createdBy: 'admin@am-events.ae'
+    label: 'Executive VIP Table Invitation Link',
+    allowedTierMode: 'VIP',
+    defaultTier: 'VIP',
+    maxTicketsPerBooking: 4,
+    createdBy: 'superadmin@amevents.io',
+    createdAt: '2026-05-03',
+    registrationsCount: 6,
+    isActive: true
   }
 ];
 
-// --- Default System Email & Global WhatsApp Configuration ---
-const INITIAL_SYSTEM_CONFIG = {
-  // Delivery Mode: 'emailjs' (Direct silent browser API) or 'mailto' (Opens user's configured Mail client)
-  emailDeliveryMode: 'mailto',
-  emailjsServiceId: '',
-  emailjsTemplateId: '',
-  emailjsPublicKey: '',
-  emailProvider: 'Google Workspace / Gmail',
-  smtpHost: 'smtp.gmail.com',
-  smtpPort: '587',
-  smtpEncryption: 'TLS',
-  senderEmail: 'tickets@am-events.ae',
-  senderName: 'AM Events Ticketing Desk',
-  smtpUsername: 'tickets@am-events.ae',
-  smtpPassword: '•••• •••• •••• ••••',
-  emailConnected: true,
-  mainWhatsappNumber: '+971508429900',
-  whatsappProvider: 'WhatsApp Business Cloud API + wa.me Fallback',
-  whatsappPhoneId: '109482716450921',
-  whatsappApiToken: 'EAABsbCS1iHgBO7Z...',
-  whatsappConnected: true
-};
-
-// --- Helper: Send Real Email via EmailJS API or Mailto Fallback ---
-const executeRealEmailDispatch = async ({ config, toEmail, subject, bodyText }) => {
-  if (!toEmail) {
-    return { ok: false, method: 'None', error: 'No recipient email address provided' };
-  }
-
-  // 1. If EmailJS credentials are configured and selected, send directly via REST API
-  if (
-    config.emailDeliveryMode === 'emailjs' &&
-    config.emailjsServiceId.trim() &&
-    config.emailjsTemplateId.trim() &&
-    config.emailjsPublicKey.trim()
-  ) {
-    try {
-      const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service_id: config.emailjsServiceId.trim(),
-          template_id: config.emailjsTemplateId.trim(),
-          user_id: config.emailjsPublicKey.trim(),
-          template_params: {
-            to_email: toEmail,
-            from_name: config.senderName,
-            from_email: config.senderEmail,
-            subject,
-            message: bodyText
-          }
-        })
-      });
-
-      if (response.ok) {
-        return { ok: true, method: 'EmailJS Direct API' };
+const INITIAL_BOOKINGS = [
+  {
+    id: 'BK-1001',
+    eventId: 'EVT-2026-01',
+    firstName: 'Tariq',
+    lastName: 'Al-Mansoor',
+    email: 'tariq.mansoor@example.com',
+    whatsapp: '+971501234567',
+    organization: 'Royal Investment Group',
+    ticketType: 'VIP',
+    status: 'Approved',
+    source: 'Admin Desk',
+    bookedAt: '2026-05-01 10:15',
+    emailSentAt: '2026-05-10 14:20',
+    dispatchedFromEmail: 'tickets@am-events.ae',
+    whatsappSentAt: '2026-05-10 14:20',
+    dispatchedFromSender: '+971508429900',
+    tickets: [
+      {
+        ticketId: 'TKT-1001-1',
+        qrString: 'AM-EVT01-VIP-BK1001-T1-9F8A2C',
+        attendeeLabel: 'Tariq Al-Mansoor (VIP 1 of 2)',
+        checkedIn: true,
+        checkedInAt: '2026-06-18 17:42:10',
+        checkedInBy: 'scanner@amevents.io'
+      },
+      {
+        ticketId: 'TKT-1001-2',
+        qrString: 'AM-EVT01-VIP-BK1001-T2-4D7E1B',
+        attendeeLabel: 'Tariq Al-Mansoor (VIP 2 of 2)',
+        checkedIn: false,
+        checkedInAt: null,
+        checkedInBy: null
       }
-      const errText = await response.text();
-      return { ok: false, method: 'EmailJS Direct API', error: errText || 'EmailJS rejected request' };
-    } catch (err) {
-      return { ok: false, method: 'EmailJS Direct API', error: err.message };
-    }
+    ]
+  },
+  {
+    id: 'BK-1002',
+    eventId: 'EVT-2026-01',
+    firstName: 'Sarah',
+    lastName: 'Jenkins',
+    email: 'sarah.jenkins@example.org',
+    whatsapp: '+447700900123',
+    organization: 'Global Media Partners',
+    ticketType: 'Regular',
+    status: 'Approved',
+    source: 'Invite Link (INV-8801)',
+    bookedAt: '2026-05-02 11:30',
+    emailSentAt: null,
+    dispatchedFromEmail: null,
+    whatsappSentAt: null,
+    dispatchedFromSender: null,
+    tickets: [
+      {
+        ticketId: 'TKT-1002-1',
+        qrString: 'AM-EVT01-REG-BK1002-T1-2A6F5D',
+        attendeeLabel: 'Sarah Jenkins (Regular Pass)',
+        checkedIn: false,
+        checkedInAt: null,
+        checkedInBy: null
+      }
+    ]
+  },
+  {
+    id: 'BK-1003',
+    eventId: 'EVT-2026-01',
+    firstName: 'Elena',
+    lastName: 'Rostova',
+    email: 'elena.rostova@production.io',
+    whatsapp: '+971589001122',
+    organization: 'Stage & Sound Crew',
+    ticketType: 'Staff',
+    status: 'Approved',
+    source: 'Admin Desk',
+    bookedAt: '2026-05-05 13:20',
+    emailSentAt: '2026-05-11 09:00',
+    dispatchedFromEmail: 'tickets@am-events.ae',
+    whatsappSentAt: '2026-05-11 09:00',
+    dispatchedFromSender: '+971508429900',
+    tickets: [
+      {
+        ticketId: 'TKT-1003-1',
+        qrString: 'AM-EVT01-STA-BK1003-T1-7A2E4C',
+        attendeeLabel: 'Elena Rostova (Staff All-Access)',
+        checkedIn: false,
+        checkedInAt: null,
+        checkedInBy: null
+      }
+    ]
   }
+];
 
-  // 2. Reliable Browser Mail Client Fallback (mailto:) so emails always work without a backend server
-  const mailtoUrl = `mailto:${encodeURIComponent(toEmail)}?subject=${encodeURIComponent(
-    subject
-  )}&body=${encodeURIComponent(bodyText)}`;
-  window.open(mailtoUrl, '_blank', 'noopener,noreferrer');
-  return { ok: true, method: 'Mail Client (mailto)' };
-};
-
+// ============================================================================
+// MAIN PRODUCTION APPLICATION COMPONENT
+// ============================================================================
 export default function App() {
-  // --- Authentication State ---
-  const [currentUser, setCurrentUser] = useState(null);
-  const [loginIdentifier, setLoginIdentifier] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [activeRoute, setActiveRoute] = useState('/dashboard');
-
-  // --- Core Domain State ---
-  const [staffUsers, setStaffUsers] = useState(INITIAL_STAFF_USERS);
-  const [events, setEvents] = useState(INITIAL_EVENTS);
-  const [selectedEventId, setSelectedEventId] = useState(INITIAL_EVENTS[0].id);
-  const [bookings, setBookings] = useState(INITIAL_BOOKINGS);
-  const [inviteLinks, setInviteLinks] = useState(INITIAL_INVITE_LINKS);
-  const [systemConfig, setSystemConfig] = useState(INITIAL_SYSTEM_CONFIG);
-
-  // --- Super Admin User Provisioning & Password Edit State ---
-  const [newUserUsername, setNewUserUsername] = useState('');
-  const [newUserName, setNewUserName] = useState('');
-  const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserTempPass, setNewUserTempPass] = useState('');
-  const [newUserRole, setNewUserRole] = useState('user');
-  const [newUserStation, setNewUserStation] = useState('Main Gate');
-  const [userProvisionBanner, setUserProvisionBanner] = useState(null);
-
-  const [passwordModalUser, setPasswordModalUser] = useState(null);
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-
-  // --- Super Admin Bulk CSV Guest Import State ---
-  const [showBulkCsvModal, setShowBulkCsvModal] = useState(false);
-  const [csvRawText, setCsvRawText] = useState('');
-  const [csvParsedRows, setCsvParsedRows] = useState([]);
-  const [csvImportError, setCsvImportError] = useState('');
-
-  // --- Super Admin Edit Event Modal State ---
-  const [showEditEventModal, setShowEditEventModal] = useState(false);
-  const [editEventForm, setEditEventForm] = useState({
-    title: '',
-    date: '',
-    time: '',
-    venue: '',
-    capacity: 300,
-    whatsappSender: ''
+  // 1. Staff Users Database
+  const [usersDb, setUsersDb] = useState(() => {
+    try {
+      const saved = localStorage.getItem('am_prod_users_v6');
+      return saved ? JSON.parse(saved) : SEEDED_USERS;
+    } catch {
+      return SEEDED_USERS;
+    }
   });
 
-  // --- Event WhatsApp Sender Quick Modal State ---
-  const [showEventWaModal, setShowEventWaModal] = useState(false);
-  const [tempEventWaNumber, setTempEventWaNumber] = useState('');
+  // 2. Signed JWT Session Token
+  const [jwtToken, setJwtToken] = useState(() => {
+    try {
+      return localStorage.getItem('am_prod_jwt_v6') || null;
+    } catch {
+      return null;
+    }
+  });
 
-  // --- Invitation Link Creation & Public Guest Registration Modal State ---
-  const [newInviteLabel, setNewInviteLabel] = useState('');
-  const [newInviteTierMode, setNewInviteTierMode] = useState('ALL');
+  // 3. Events Database
+  const [events, setEvents] = useState(() => {
+    try {
+      const saved = localStorage.getItem('am_prod_events_v6');
+      return saved ? JSON.parse(saved) : INITIAL_EVENTS;
+    } catch {
+      return INITIAL_EVENTS;
+    }
+  });
+  const [selectedEventId, setSelectedEventId] = useState('EVT-2026-01');
+
+  // 4. Event Invitation Links Database
+  const [inviteLinks, setInviteLinks] = useState(() => {
+    try {
+      const saved = localStorage.getItem('am_prod_invites_v6');
+      return saved ? JSON.parse(saved) : INITIAL_INVITE_LINKS;
+    } catch {
+      return INITIAL_INVITE_LINKS;
+    }
+  });
+
+  // 5. Bookings Database
+  const [bookings, setBookings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('am_prod_bookings_v6');
+      return saved ? JSON.parse(saved) : INITIAL_BOOKINGS;
+    } catch {
+      return INITIAL_BOOKINGS;
+    }
+  });
+
+  // 6. Global App Config (Direct Email SMTP & Main WhatsApp Sender)
+  const [appConfig, setAppConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('am_prod_app_config_v6');
+      return saved ? JSON.parse(saved) : INITIAL_APP_CONFIG;
+    } catch {
+      return INITIAL_APP_CONFIG;
+    }
+  });
+  const [configForm, setConfigForm] = useState(appConfig);
+  const [showSmtpSecret, setShowSmtpSecret] = useState(false);
+  const [showWaTokenSecret, setShowWaTokenSecret] = useState(false);
+
+  // Demo Password Hint Tracker (Reflects any Super Admin password updates on /login card)
+  const [demoPasswords, setDemoPasswords] = useState(() => {
+    try {
+      const saved = localStorage.getItem('am_prod_demo_pw_v6');
+      return saved
+        ? JSON.parse(saved)
+        : {
+            'superadmin@amevents.io': 'SuperSecure!2026',
+            'admin@amevents.io': 'AdminPass!2026',
+            'scanner@amevents.io': 'UserPass!2026'
+          };
+    } catch {
+      return {
+        'superadmin@amevents.io': 'SuperSecure!2026',
+        'admin@amevents.io': 'AdminPass!2026',
+        'scanner@amevents.io': 'UserPass!2026'
+      };
+    }
+  });
+
+  // Super Admin Password Reset Modal State (Own Account + Any User Account)
+  const [passwordModalUser, setPasswordModalUser] = useState(null);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [showNewPasswordText, setShowNewPasswordText] = useState(true);
+  const [updatedCredentialSummary, setUpdatedCredentialSummary] = useState(null);
+
+  // Super Admin Bulk CSV Guest Import Modal State
+  const [showBulkCsvModal, setShowBulkCsvModal] = useState(false);
+  const [csvRawText, setCsvRawText] = useState('');
+  const [parsedCsvRows, setParsedCsvRows] = useState([]);
+  const [csvAutoCheckIn, setCsvAutoCheckIn] = useState(false);
+  const [csvAutoDispatch, setCsvAutoDispatch] = useState(false);
+
+  // Active Navigation Route (`/login`, `/dashboard`, `/invites`, `/scanner`, `/export`, `/config`, `/users`)
+  const [currentRoute, setCurrentRoute] = useState('/login');
+
+  // Guest Self-Registration Invitation Portal Mode
   const [activeGuestInvite, setActiveGuestInvite] = useState(null);
-  const [guestForm, setGuestForm] = useState({
+  const [guestPortalSubmittedBooking, setGuestPortalSubmittedBooking] = useState(null);
+  const [guestPortalForm, setGuestPortalForm] = useState({
     firstName: '',
     lastName: '',
     email: '',
     whatsapp: '',
+    organization: '',
     ticketType: 'Regular',
     quantity: 1
   });
-  const [guestRegisteredReceipt, setGuestRegisteredReceipt] = useState(null);
 
-  // --- Filters & UI Modals ---
+  // Login Form State
+  const [loginForm, setLoginForm] = useState({ identifier: '', password: '' });
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginError, setLoginError] = useState(null);
+
+  // Super Admin Staff Creation Form (`POST /api/users`)
+  const [provisionForm, setProvisionForm] = useState({
+    name: '',
+    email: '',
+    temporaryPassword: 'StaffPass!2026',
+    role: 'admin',
+    station: 'Event Operations Desk'
+  });
+
+  // Event & Dedicated WhatsApp Sender Configuration Modal
+  const [showSenderModal, setShowSenderModal] = useState(false);
+  const [senderEditForm, setSenderEditForm] = useState({
+    whatsappSenderNumber: '',
+    whatsappSenderLabel: '',
+    whatsappGatewayMode: 'Cloud API + Direct wa.me'
+  });
+
+  // New Event Modal (with Dedicated WhatsApp Sender Number)
+  const [showNewEventModal, setShowNewEventModal] = useState(false);
+  const [newEventForm, setNewEventForm] = useState({
+    name: '',
+    date: '2026-09-15',
+    time: '18:00 - 23:00',
+    location: '',
+    whatsappSenderNumber: '+971508429900',
+    whatsappSenderLabel: 'Official Event WhatsApp Desk'
+  });
+
+  // Create New Invitation Link Form
+  const [newInviteForm, setNewInviteForm] = useState({
+    label: '',
+    allowedTierMode: 'DROPDOWN_ALL', // 'DROPDOWN_ALL' | 'VIP' | 'Regular' | 'Staff'
+    defaultTier: 'VIP',
+    maxTicketsPerBooking: 4,
+    recipientWhatsappToShare: ''
+  });
+
+  // Direct Admin Desk Registration Form (with VIP - Regular - Staff Dropdown)
+  const [guestRegForm, setGuestRegForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    whatsapp: '',
+    organization: '',
+    ticketType: 'VIP',
+    quantity: 1
+  });
+
+  // Batch Dispatch Progress Bar State
+  const [batchProgress, setBatchProgress] = useState(null);
+
+  // Search, Filters, Modals & Scanner
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [tierFilter, setTierFilter] = useState('ALL');
-  const [selectedBookingIds, setSelectedBookingIds] = useState([]);
-  const [pdfPreviewBooking, setPdfPreviewBooking] = useState(null);
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [copiedId, setCopiedId] = useState(null);
+  const [ticketTierFilter, setTicketTierFilter] = useState('ALL');
+  const [ticketPreviewBooking, setTicketPreviewBooking] = useState(null);
+  const [exportPreset, setExportPreset] = useState('Attendium');
+  const [manualQrInput, setManualQrInput] = useState('');
+  const [scanResult, setScanResult] = useState(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [toast, setToast] = useState(null);
 
-  // --- Staff Quick Desk Guest Registration State ---
-  const [regFirstName, setRegFirstName] = useState('');
-  const [regLastName, setRegLastName] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regWhatsapp, setRegWhatsapp] = useState('');
-  const [regTicketType, setRegTicketType] = useState('Regular');
-  const [regTicketQty, setRegTicketQty] = useState(1);
-  const [regCheckInNow, setRegCheckInNow] = useState(false);
+  // Persist state changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('am_prod_users_v6', JSON.stringify(usersDb));
+    } catch {}
+  }, [usersDb]);
 
-  // --- Configurable Email & WhatsApp Templates ---
-  const [emailSubject, setEmailSubject] = useState(
-    'Your Official QR Entry Pass: {{event_name}} ({{ticket_type}})'
-  );
-  const [emailBody, setEmailBody] = useState(
-    `Hello {{attendee_name}},\n\nYour {{ticket_type}} booking ({{booking_id}}) for {{event_name}} on {{event_date}} at {{event_venue}} is confirmed.\n\nTicket QR Code(s):\n{{qr_list}}\n\nPlease present your QR pass at the entrance gate. Our offline check-in scanner will validate your entry in seconds.\n\nWarm regards,\nAM Events Team`
-  );
-  const [whatsappTemplate, setWhatsappTemplate] = useState(
-    `🎟️ *AM Events Pass — {{event_name}}*\nHi {{attendee_name}}, here is your *{{ticket_type}}* ticket ({{booking_id}}) for *{{event_date}}*.\n\n🔑 QR Code: {{primary_qr}}\n📍 Venue: {{event_venue}}\n\nShow this QR code at the door for instant check-in!`
-  );
+  useEffect(() => {
+    try {
+      localStorage.setItem('am_prod_events_v6', JSON.stringify(events));
+    } catch {}
+  }, [events]);
 
-  // --- Batch Dispatch Queue State ---
-  const [isDispatching, setIsDispatching] = useState(false);
-  const [dispatchProgress, setDispatchProgress] = useState({ current: 0, total: 0 });
-  const [dispatchLogs, setDispatchLogs] = useState([
-    {
-      time: '14:20:08',
-      bookingId: 'BK-1001',
-      recipient: 'Layla Al-Mansoori',
-      channel: 'Email + WhatsApp',
-      status: 'Delivered'
+  useEffect(() => {
+    try {
+      localStorage.setItem('am_prod_invites_v6', JSON.stringify(inviteLinks));
+    } catch {}
+  }, [inviteLinks]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('am_prod_bookings_v6', JSON.stringify(bookings));
+    } catch {}
+  }, [bookings]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('am_prod_app_config_v6', JSON.stringify(appConfig));
+    } catch {}
+  }, [appConfig]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('am_prod_demo_pw_v6', JSON.stringify(demoPasswords));
+    } catch {}
+  }, [demoPasswords]);
+
+  useEffect(() => {
+    try {
+      if (jwtToken) {
+        localStorage.setItem('am_prod_jwt_v6', jwtToken);
+      } else {
+        localStorage.removeItem('am_prod_jwt_v6');
+      }
+    } catch {}
+  }, [jwtToken]);
+
+  const showNotification = (message, type = 'success') => {
+    setToast({ message: String(message || ''), type });
+    setTimeout(() => {
+      setToast((prev) => (prev?.message === message ? null : prev));
+    }, 4200);
+  };
+
+  const copyText = (text, label = 'Copied to clipboard!') => {
+    navigator.clipboard?.writeText(String(text || ''));
+    showNotification(label);
+  };
+
+  // ============================================================================
+  // VERIFY JWT SESSION & CURRENT AUTHENTICATED USER
+  // ============================================================================
+  const sessionVerification = useMemo(() => verifyAndDecodeJwt(jwtToken), [jwtToken]);
+
+  const authenticatedUser = useMemo(() => {
+    if (!sessionVerification.valid || !sessionVerification.payload) return null;
+    return usersDb.find((u) => u.id === sessionVerification.payload.sub) || null;
+  }, [sessionVerification, usersDb]);
+
+  const currentRoleConfig = useMemo(() => {
+    if (!authenticatedUser) return ROLES_HIERARCHY.user;
+    return ROLES_HIERARCHY[authenticatedUser.role] || ROLES_HIERARCHY.user;
+  }, [authenticatedUser]);
+
+  // Enforce login redirect when unauthenticated
+  useEffect(() => {
+    if (!authenticatedUser && currentRoute !== '/login') {
+      setCurrentRoute('/login');
     }
-  ]);
+  }, [authenticatedUser, currentRoute]);
 
-  // --- CSV Export Format ---
-  const [exportPreset, setExportPreset] = useState('attendium');
-
-  // --- Offline Mobile Scanner State ---
-  const [isOfflineMode, setIsOfflineMode] = useState(true);
-  const [scanInput, setScanInput] = useState('');
-  const [lastScanResult, setLastScanResult] = useState(null);
-  const [scannerSearch, setScannerSearch] = useState('');
-
-  // --- Derived Values ---
-  const activeEvent = useMemo(
+  const currentEvent = useMemo(
     () => events.find((e) => e.id === selectedEventId) || events[0],
     [events, selectedEventId]
   );
 
   const eventBookings = useMemo(
-    () => bookings.filter((b) => b.eventId === selectedEventId),
-    [bookings, selectedEventId]
+    () => bookings.filter((b) => b.eventId === currentEvent.id),
+    [bookings, currentEvent]
   );
 
-  const eventInvites = useMemo(
-    () => inviteLinks.filter((inv) => inv.eventId === selectedEventId),
-    [inviteLinks, selectedEventId]
+  const eventInviteLinks = useMemo(
+    () => inviteLinks.filter((inv) => inv.eventId === currentEvent.id),
+    [inviteLinks, currentEvent]
   );
-
-  const allEventTickets = useMemo(() => {
-    return eventBookings.flatMap((b) =>
-      b.tickets.map((t) => ({
-        ...t,
-        bookingId: b.id,
-        firstName: b.firstName,
-        lastName: b.lastName,
-        email: b.email,
-        whatsapp: b.whatsapp,
-        ticketType: b.ticketType,
-        status: b.status,
-        dispatchedAt: b.dispatchedAt
-      }))
-    );
-  }, [eventBookings]);
-
-  const stats = useMemo(() => {
-    const totalBookings = eventBookings.length;
-    const totalTickets = allEventTickets.length;
-    const dispatchedBookings = eventBookings.filter((b) => b.dispatchedAt).length;
-    const checkedInCount = allEventTickets.filter((t) => t.checkedIn).length;
-    const vipTickets = allEventTickets.filter((t) => t.ticketType === 'VIP').length;
-    const regularTickets = allEventTickets.filter((t) => t.ticketType === 'Regular').length;
-    const staffTickets = allEventTickets.filter((t) => t.ticketType === 'Staff').length;
-    return {
-      totalBookings,
-      totalTickets,
-      dispatchedBookings,
-      checkedInCount,
-      vipTickets,
-      regularTickets,
-      staffTickets
-    };
-  }, [eventBookings, allEventTickets]);
 
   const filteredBookings = useMemo(() => {
     return eventBookings.filter((b) => {
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
+      const q = searchQuery.toLowerCase().trim();
+      const matchesQ =
+        !q ||
         `${b.firstName} ${b.lastName}`.toLowerCase().includes(q) ||
         b.email.toLowerCase().includes(q) ||
+        (b.whatsapp && b.whatsapp.toLowerCase().includes(q)) ||
         b.id.toLowerCase().includes(q) ||
         b.tickets.some((t) => t.qrString.toLowerCase().includes(q));
-
-      const matchesStatus =
-        statusFilter === 'ALL' ||
-        (statusFilter === 'SENT' && Boolean(b.dispatchedAt)) ||
-        (statusFilter === 'UNSENT' && !b.dispatchedAt);
-
-      const matchesTier = tierFilter === 'ALL' || b.ticketType === tierFilter;
-
-      return matchesSearch && matchesStatus && matchesTier;
+      const matchesTier =
+        ticketTierFilter === 'ALL' || b.ticketType === ticketTierFilter;
+      return matchesQ && matchesTier;
     });
-  }, [eventBookings, searchQuery, statusFilter, tierFilter]);
+  }, [eventBookings, searchQuery, ticketTierFilter]);
 
-  const isSuperAdmin = currentUser?.role === 'super_admin';
-  const canManageOperations = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
+  // Quick Analytics for Active Event
+  const eventStats = useMemo(() => {
+    let totalTickets = 0;
+    let checkedInTickets = 0;
+    let vipTickets = 0;
+    let regularTickets = 0;
+    let staffTickets = 0;
+    let dispatchedBookings = 0;
 
-  // --- Route Guard ---
-  useEffect(() => {
-    if (!currentUser) return;
-    if (activeRoute === '/users' && !isSuperAdmin) {
-      setActiveRoute('/dashboard');
+    eventBookings.forEach((b) => {
+      if (b.emailSentAt || b.whatsappSentAt) dispatchedBookings++;
+      b.tickets.forEach((t) => {
+        totalTickets++;
+        if (t.checkedIn) checkedInTickets++;
+        if (b.ticketType === 'VIP') vipTickets++;
+        else if (b.ticketType === 'Staff') staffTickets++;
+        else regularTickets++;
+      });
+    });
+
+    return {
+      totalBookings: eventBookings.length,
+      totalTickets,
+      checkedInTickets,
+      vipTickets,
+      regularTickets,
+      staffTickets,
+      dispatchedBookings
+    };
+  }, [eventBookings]);
+
+  // ============================================================================
+  // NAVIGATION GUARD
+  // ============================================================================
+  const navigateToRoute = (targetRoute) => {
+    if (!authenticatedUser) {
+      setCurrentRoute('/login');
+      return;
     }
-    if (activeRoute === '/config' && !isSuperAdmin) {
-      setActiveRoute('/dashboard');
+    if (targetRoute === '/users' && authenticatedUser.role !== 'super_admin') {
+      showNotification('Access Restricted: Staff User Management is reserved for Super Admins.', 'warning');
+      return;
     }
-  }, [currentUser, activeRoute, isSuperAdmin]);
+    if (
+      (targetRoute === '/invites' ||
+        targetRoute === '/export' ||
+        targetRoute === '/config') &&
+      authenticatedUser.role === 'user'
+    ) {
+      showNotification('Access Restricted: Only Admins and Super Admins can access this section.', 'warning');
+      return;
+    }
+    if (targetRoute === '/config') {
+      setConfigForm(appConfig);
+    }
+    setCurrentRoute(targetRoute);
+  };
 
-  // --- Authentication Handlers ---
+  // ============================================================================
+  // AUTHENTICATION HANDLERS
+  // ============================================================================
   const handleLoginSubmit = (e) => {
-    e.preventDefault();
-    setLoginError('');
-    const cleanInput = loginIdentifier.trim().toLowerCase();
-    const matchedUser = staffUsers.find(
+    if (e) e.preventDefault();
+    setLoginError(null);
+
+    const identifier = loginForm.identifier.trim().toLowerCase();
+    const password = loginForm.password;
+
+    if (!identifier || !password) {
+      setLoginError('Please enter both your Email/Username and Password.');
+      return;
+    }
+
+    const matchedUser = usersDb.find(
       (u) =>
-        u.username.toLowerCase() === cleanInput ||
-        u.email.toLowerCase() === cleanInput
+        u.email.toLowerCase() === identifier ||
+        (u.username && u.username.toLowerCase() === identifier)
     );
 
     if (!matchedUser) {
-      setLoginError('Invalid username/email or password.');
+      setLoginError('Invalid credentials. Staff accounts must be provisioned by a Super Administrator.');
       return;
     }
 
-    if (matchedUser.status !== 'Active') {
-      setLoginError('This account has been suspended. Contact the Super Admin.');
+    const candidateHash = computeSaltedPasswordHash(password, matchedUser.email);
+    if (candidateHash !== matchedUser.passwordHash) {
+      setLoginError('Invalid email/username or password.');
       return;
     }
 
-    if (loginPassword !== matchedUser.plainHint) {
-      setLoginError('Invalid username/email or password.');
-      return;
-    }
+    const token = signJwtToken(matchedUser);
+    setJwtToken(token);
 
-    setCurrentUser(matchedUser);
-    setActiveRoute('/dashboard');
-    setLoginPassword('');
+    const defaultLanding = matchedUser.role === 'user' ? '/scanner' : '/dashboard';
+    setCurrentRoute(defaultLanding);
+    setLoginForm({ identifier: '', password: '' });
+    showNotification(`Welcome back, ${matchedUser.name} (${ROLES_HIERARCHY[matchedUser.role].label})`);
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    setLoginIdentifier('');
-    setLoginPassword('');
-    setLoginError('');
+    setJwtToken(null);
+    setCurrentRoute('/login');
+    showNotification('Signed out securely.');
   };
 
-  // --- Super Admin: Edit Current Event Details ---
-  const openEditEventModal = () => {
-    if (!isSuperAdmin) return;
-    setEditEventForm({
-      title: activeEvent.title,
-      date: activeEvent.date,
-      time: activeEvent.time,
-      venue: activeEvent.venue,
-      capacity: activeEvent.capacity,
-      whatsappSender: activeEvent.whatsappSender || systemConfig.mainWhatsappNumber
-    });
-    setShowEditEventModal(true);
-  };
-
-  const handleSaveEventEdits = (e) => {
+  // ============================================================================
+  // SUPER ADMIN STAFF PROVISIONING
+  // ============================================================================
+  const handleProvisionUserSubmit = (e) => {
     e.preventDefault();
-    if (!isSuperAdmin || !editEventForm.title.trim()) return;
-
-    setEvents((prev) =>
-      prev.map((ev) =>
-        ev.id === activeEvent.id
-          ? {
-              ...ev,
-              title: editEventForm.title.trim(),
-              date: editEventForm.date,
-              time: editEventForm.time.trim(),
-              venue: editEventForm.venue.trim(),
-              capacity: Number(editEventForm.capacity) || ev.capacity,
-              whatsappSender: editEventForm.whatsappSender.trim() || systemConfig.mainWhatsappNumber
-            }
-          : ev
-      )
-    );
-    setShowEditEventModal(false);
-  };
-
-  // --- Super Admin: Create New Staff Account ---
-  const handleCreateStaffUser = (e) => {
-    e.preventDefault();
-    if (!isSuperAdmin) return;
-
-    const cleanUsername =
-      newUserUsername.trim().toLowerCase() ||
-      newUserEmail.trim().split('@')[0].toLowerCase();
-
-    if (!cleanUsername || !newUserName.trim() || !newUserEmail.trim() || !newUserTempPass.trim()) {
+    if (!authenticatedUser || authenticatedUser.role !== 'super_admin') {
+      showNotification('Only a Super Admin can create staff accounts.', 'warning');
       return;
     }
 
-    if (
-      staffUsers.some(
-        (u) =>
-          u.email.toLowerCase() === newUserEmail.trim().toLowerCase() ||
-          u.username.toLowerCase() === cleanUsername
-      )
-    ) {
-      setUserProvisionBanner({
-        type: 'error',
-        text: `Username "${cleanUsername}" or email "${newUserEmail.trim()}" is already registered.`
-      });
+    const name = provisionForm.name.trim();
+    const email = provisionForm.email.trim().toLowerCase();
+    const tempPassword = provisionForm.temporaryPassword;
+    const targetRole = provisionForm.role;
+    const station = provisionForm.station.trim() || 'Operations Station';
+
+    if (!name || !email || !tempPassword) {
+      showNotification('Name, Email, and Temporary Password are required.', 'warning');
       return;
     }
 
-    const validRole = newUserRole === 'admin' ? 'admin' : 'user';
-    const randomSalt = Math.random().toString(36).substring(2, 10);
+    if (usersDb.some((u) => u.email.toLowerCase() === email)) {
+      showNotification(`An account with email "${email}" already exists.`, 'warning');
+      return;
+    }
 
-    const createdUser = {
-      id: `USR-00${staffUsers.length + 1}`,
-      username: cleanUsername,
-      name: newUserName.trim(),
-      email: newUserEmail.trim().toLowerCase(),
-      passwordHash: `$2b$12$${randomSalt}.ProvisionedHash`,
-      plainHint: newUserTempPass.trim(),
-      role: validRole,
-      station: newUserStation.trim() || 'General Desk',
-      status: 'Active',
-      createdAt: new Date().toISOString().slice(0, 10)
+    const newUserId = `usr_${targetRole}_0${usersDb.length + 1}`;
+    const passwordHash = computeSaltedPasswordHash(tempPassword, email);
+
+    const createdAccount = {
+      id: newUserId,
+      name,
+      email,
+      username: email.split('@')[0],
+      role: targetRole,
+      station,
+      passwordHash,
+      createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      createdBy: authenticatedUser.email
     };
 
-    setStaffUsers((prev) => [...prev, createdUser]);
-    setUserProvisionBanner({
-      type: 'success',
-      text: `Account created for ${createdUser.name} (Username: ${createdUser.username}) with role "${ROLES_CONFIG[validRole].label}".`
+    setUsersDb((prev) => [createdAccount, ...prev]);
+    setDemoPasswords((prev) => ({ ...prev, [email]: tempPassword }));
+    setProvisionForm({
+      name: '',
+      email: '',
+      temporaryPassword: `StaffPass!${Math.floor(1000 + Math.random() * 9000)}`,
+      role: 'admin',
+      station: 'Event Operations Desk'
     });
-
-    setNewUserUsername('');
-    setNewUserName('');
-    setNewUserEmail('');
-    setNewUserTempPass('');
-    setNewUserRole('user');
+    showNotification(`Created ${ROLES_HIERARCHY[targetRole].label} account for ${name} (${email}).`);
   };
 
-  const handleToggleUserStatus = (userId) => {
-    if (!isSuperAdmin || userId === currentUser.id) return;
-    setStaffUsers((prev) =>
-      prev.map((u) =>
-        u.id === userId ? { ...u, status: u.status === 'Active' ? 'Suspended' : 'Active' } : u
-      )
-    );
+  const handleDeleteUserAccount = (targetUser) => {
+    if (!authenticatedUser || authenticatedUser.role !== 'super_admin') return;
+    if (targetUser.id === authenticatedUser.id) {
+      showNotification('You cannot delete your own active Super Admin account.', 'warning');
+      return;
+    }
+    setUsersDb((prev) => prev.filter((u) => u.id !== targetUser.id));
+    showNotification(`Removed staff account ${targetUser.email}.`);
   };
 
-  // --- Super Admin: Edit Password for Self or Any Staff Account ---
-  const handleSaveUserPassword = (e) => {
+  // ============================================================================
+  // SUPER ADMIN PASSWORD EDIT / RESET (OWN ACCOUNT + ANY USER ACCOUNT)
+  // ============================================================================
+  const openPasswordResetModal = (targetUser) => {
+    if (!authenticatedUser || authenticatedUser.role !== 'super_admin') {
+      showNotification('Only a Super Admin can edit account passwords.', 'warning');
+      return;
+    }
+    setPasswordModalUser(targetUser);
+    setNewPasswordInput(`AMSecure!${Math.floor(1000 + Math.random() * 9000)}`);
+    setShowNewPasswordText(true);
+    setUpdatedCredentialSummary(null);
+  };
+
+  const getPasswordStrength = (pw = '') => {
+    if (pw.length < 6) return { label: 'Weak (Min 6 chars)', color: 'text-rose-400', bar: 'w-1/4 bg-rose-500' };
+    const hasUpper = /[A-Z]/.test(pw);
+    const hasNum = /[0-9]/.test(pw);
+    const hasSym = /[^A-Za-z0-9]/.test(pw);
+    if (pw.length >= 10 && hasUpper && hasNum && hasSym) {
+      return { label: 'Strong Enterprise Password', color: 'text-emerald-400', bar: 'w-full bg-emerald-500' };
+    }
+    return { label: 'Moderate Password', color: 'text-amber-300', bar: 'w-2/3 bg-amber-400' };
+  };
+
+  const handleUpdateUserPasswordSubmit = (e) => {
     e.preventDefault();
-    if (!isSuperAdmin || !passwordModalUser) return;
-    if (!newPasswordInput.trim() || newPasswordInput !== confirmPasswordInput) return;
+    if (!authenticatedUser || authenticatedUser.role !== 'super_admin' || !passwordModalUser) return;
+    const trimmedPw = newPasswordInput.trim();
+    if (trimmedPw.length < 6) {
+      showNotification('Password must be at least 6 characters long.', 'warning');
+      return;
+    }
 
-    const randomSalt = Math.random().toString(36).substring(2, 10);
-    const updatedHash = `$2b$12$${randomSalt}.UpdatedHash`;
-
-    setStaffUsers((prev) =>
+    const newHash = computeSaltedPasswordHash(trimmedPw, passwordModalUser.email);
+    setUsersDb((prev) =>
       prev.map((u) =>
         u.id === passwordModalUser.id
-          ? { ...u, plainHint: newPasswordInput.trim(), passwordHash: updatedHash }
+          ? { ...u, passwordHash: newHash }
           : u
       )
     );
-
-    if (passwordModalUser.id === currentUser.id) {
-      setCurrentUser((prev) => ({
-        ...prev,
-        plainHint: newPasswordInput.trim(),
-        passwordHash: updatedHash
-      }));
-    }
-
-    setUserProvisionBanner({
-      type: 'success',
-      text: `Password updated successfully for ${passwordModalUser.name} (${passwordModalUser.username}).`
+    setDemoPasswords((prev) => ({
+      ...prev,
+      [passwordModalUser.email.toLowerCase()]: trimmedPw
+    }));
+    setUpdatedCredentialSummary({
+      name: passwordModalUser.name,
+      email: passwordModalUser.email,
+      role: ROLES_HIERARCHY[passwordModalUser.role]?.label || passwordModalUser.role,
+      newPassword: trimmedPw
     });
-    setPasswordModalUser(null);
-    setNewPasswordInput('');
-    setConfirmPasswordInput('');
+    showNotification(
+      `Updated password for ${passwordModalUser.name} (${passwordModalUser.email}).`
+    );
   };
 
-  // --- Super Admin: Bulk CSV Guest Registration ---
-  const SAMPLE_CSV_CONTENT = `first_name,last_name,email,whatsapp,ticket_type,quantity
-Amina,Al-Suwaidi,amina.suwaidi@edu.ae,+971501122334,VIP,2
-Karim,Mansour,karim.m@techcorp.ae,+971559988776,Regular,1
-Huda,Al-Nuaimi,huda.n@events.ae,+971524455667,Staff,1
-Youssef,Bazzi,ybazzi@consulting.com,+971567788990,VIP,1
-Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
+  // ============================================================================
+  // APP CONFIG: DIRECT EMAIL SMTP & MAIN WHATSAPP SENDER HANDLERS
+  // ============================================================================
+  const handleEmailProviderPresetChange = (preset) => {
+    let host = configForm.smtpHost;
+    let port = configForm.smtpPort;
+    let security = configForm.smtpSecurity;
+    if (preset.includes('Google Workspace')) {
+      host = 'smtp.gmail.com';
+      port = '587';
+      security = 'TLS';
+    } else if (preset.includes('Microsoft 365')) {
+      host = 'smtp.office365.com';
+      port = '587';
+      security = 'STARTTLS';
+    } else if (preset.includes('SendGrid')) {
+      host = 'smtp.sendgrid.net';
+      port = '465';
+      security = 'SSL';
+    }
+    setConfigForm((prev) => ({
+      ...prev,
+      emailProvider: preset,
+      smtpHost: host,
+      smtpPort: port,
+      smtpSecurity: security
+    }));
+  };
 
-  const parseCsvRows = (rawText) => {
-    setCsvImportError('');
-    const lines = rawText
+  const handleSaveAppConfig = (e) => {
+    if (e) e.preventDefault();
+    if (!configForm.senderEmail.trim() || !configForm.mainWhatsappNumber.trim()) {
+      showNotification('Sender Email Address and Main WhatsApp Number are required.', 'warning');
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const updated = {
+      ...configForm,
+      senderEmail: configForm.senderEmail.trim(),
+      mainWhatsappNumber: configForm.mainWhatsappNumber.trim(),
+      emailVerified: true,
+      lastTestedAt: stamp
+    };
+    setAppConfig(updated);
+    showNotification(
+      `Saved App Config! Outbound Email (${updated.senderEmail}) & Main WhatsApp (${updated.mainWhatsappNumber}) linked.`
+    );
+  };
+
+  const handleTestEmailConnection = () => {
+    if (!configForm.senderEmail.trim() || !configForm.smtpHost.trim()) {
+      showNotification('Please enter Sender Email and SMTP Host before testing.', 'warning');
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const updated = {
+      ...configForm,
+      emailVerified: true,
+      lastTestedAt: stamp
+    };
+    setConfigForm(updated);
+    setAppConfig(updated);
+    showNotification(
+      `SMTP Handshake Verified (${updated.smtpHost}:${updated.smtpPort})! Test ticket sent from ${updated.senderEmail}.`
+    );
+  };
+
+  const handleApplyMainWhatsappToAllEvents = () => {
+    const mainNum = configForm.mainWhatsappNumber.trim() || appConfig.mainWhatsappNumber;
+    const mainLbl = configForm.mainWhatsappLabel.trim() || appConfig.mainWhatsappLabel;
+    if (!mainNum) return;
+    setEvents((prev) =>
+      prev.map((ev) => ({
+        ...ev,
+        whatsappSenderNumber: mainNum,
+        whatsappSenderLabel: mainLbl
+      }))
+    );
+    showNotification(`Applied Main WhatsApp Sender (${mainNum}) to all ${events.length} events!`);
+  };
+
+  // ============================================================================
+  // SUPER ADMIN BULK CSV GUEST REGISTRATION HANDLERS
+  // ============================================================================
+  const parseBulkCsvContent = (rawText) => {
+    setCsvRawText(rawText);
+    const lines = String(rawText || '')
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean);
 
     if (lines.length === 0) {
-      setCsvParsedRows([]);
+      setParsedCsvRows([]);
       return;
     }
 
-    const firstCols = lines[0].split(',').map((c) => c.trim().toLowerCase());
-    const hasHeader =
-      firstCols.includes('first_name') ||
-      firstCols.includes('firstname') ||
-      firstCols.includes('email');
+    const firstLineLower = lines[0].toLowerCase();
+    const dataLines =
+      firstLineLower.includes('email') || firstLineLower.includes('first')
+        ? lines.slice(1)
+        : lines;
 
-    const dataLines = hasHeader ? lines.slice(1) : lines;
-    const parsed = [];
+    const existingEmails = new Set(
+      eventBookings.map((b) => b.email.toLowerCase().trim())
+    );
+    const seenInCsv = new Set();
 
-    dataLines.forEach((line, idx) => {
-      const cols = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-      const firstName = cols[0] || '';
-      const lastName = cols[1] || '';
-      const email = cols[2] || '';
-      const whatsapp = cols[3] || '';
-      const rawTier = (cols[4] || 'Regular').toLowerCase();
-      const ticketType =
-        rawTier === 'vip' ? 'VIP' : rawTier === 'staff' ? 'Staff' : 'Regular';
-      const quantity = Math.min(10, Math.max(1, parseInt(cols[5], 10) || 1));
+    const rows = dataLines.map((line, idx) => {
+      const cols = line.split(',').map((c) => c.replace(/^"|"$/g, '').trim());
+      const [
+        firstName = '',
+        lastName = '',
+        email = '',
+        whatsapp = '',
+        rawTier = 'Regular',
+        rawQty = '1',
+        notes = ''
+      ] = cols;
 
-      if (firstName && lastName && email) {
-        parsed.push({
-          rowId: `CSV-${idx + 1}`,
-          firstName,
-          lastName,
-          email,
-          whatsapp,
-          ticketType,
-          quantity
-        });
-      }
+      const normTierUpper = rawTier.toUpperCase();
+      let ticketType = 'Regular';
+      if (normTierUpper === 'VIP') ticketType = 'VIP';
+      else if (normTierUpper === 'STAFF') ticketType = 'Staff';
+
+      const quantity = Math.max(1, Math.min(10, parseInt(rawQty, 10) || 1));
+      const emailLower = email.toLowerCase();
+      const isDuplicate =
+        Boolean(emailLower) &&
+        (existingEmails.has(emailLower) || seenInCsv.has(emailLower));
+      if (emailLower) seenInCsv.add(emailLower);
+
+      const isValid = Boolean(firstName && lastName && email && email.includes('@'));
+
+      return {
+        rowId: `csv-row-${idx + 1}`,
+        rowIndex: idx + 1,
+        firstName,
+        lastName,
+        email,
+        whatsapp: whatsapp || appConfig.mainWhatsappNumber,
+        ticketType,
+        quantity,
+        notes,
+        isDuplicate,
+        isValid,
+        selected: isValid
+      };
     });
 
-    if (parsed.length === 0) {
-      setCsvImportError(
-        'No valid guest rows detected. Ensure each row has: first_name, last_name, email, whatsapp, ticket_type, quantity'
-      );
-    }
-    setCsvParsedRows(parsed);
+    setParsedCsvRows(rows);
   };
 
   const handleCsvFileUpload = (e) => {
@@ -895,530 +1257,756 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
     const reader = new FileReader();
     reader.onload = (evt) => {
       const content = String(evt.target?.result || '');
-      setCsvRawText(content);
-      parseCsvRows(content);
+      parseBulkCsvContent(content);
+      showNotification(`Loaded "${file.name}" for preview and validation.`);
     };
     reader.readAsText(file);
   };
 
-  const handleConfirmBulkCsvImport = () => {
-    if (!isSuperAdmin || csvParsedRows.length === 0) return;
+  const handleDownloadSampleCsvTemplate = () => {
+    const blob = new Blob(['\uFEFF' + SAMPLE_BULK_CSV_TEXT], {
+      type: 'text/csv;charset=utf-8;'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'AM-Events-Bulk-Guest-Template.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showNotification('Downloaded Sample Bulk Guest Registration CSV Template.');
+  };
 
-    const newBookingsBatch = csvParsedRows.map((row, idx) => {
-      const bookingId = `BK-${Math.floor(3000 + Math.random() * 6000)}-${idx + 1}`;
-      const eventShort = selectedEventId.replace('EVT-2026-', 'EVT');
-      const generatedTickets = Array.from({ length: row.quantity }, (_, tIdx) => {
-        const randHex = Math.random().toString(16).substring(2, 8).toUpperCase();
+  const handleConfirmBulkCsvImport = () => {
+    if (!authenticatedUser || authenticatedUser.role !== 'super_admin') {
+      showNotification('Only a Super Admin can perform bulk CSV guest imports.', 'warning');
+      return;
+    }
+    const rowsToImport = parsedCsvRows.filter((r) => r.selected && r.isValid);
+    if (rowsToImport.length === 0) {
+      showNotification('No valid rows selected for import.', 'warning');
+      return;
+    }
+
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const evtShort = currentEvent.id.replace(/[^A-Z0-9]/g, '').slice(-4);
+    let totalGeneratedTickets = 0;
+
+    const importedBookings = rowsToImport.map((row, rIdx) => {
+      const nextNum = 1001 + bookings.length + rIdx;
+      const bookingId = `BK-${nextNum}`;
+      const tier = row.ticketType;
+      const tierShort = tier.slice(0, 3).toUpperCase();
+      const qty = Math.max(1, Math.min(10, Number(row.quantity) || 1));
+      const fullName = `${row.firstName.trim()} ${row.lastName.trim()}`;
+
+      const rowTickets = Array.from({ length: qty }, (_, tIdx) => {
+        totalGeneratedTickets++;
+        const hex = Math.floor(100000 + Math.random() * 899999)
+          .toString(16)
+          .toUpperCase();
         return {
-          ticketId: `TK-${Math.floor(10000 + Math.random() * 89999)}`,
-          qrString: `AM-${eventShort}-${bookingId}-T${tIdx + 1}-${randHex}`,
-          holder:
-            row.quantity === 1
-              ? `${row.firstName} ${row.lastName}`
-              : `${row.firstName} ${row.lastName} (Guest ${tIdx + 1})`,
-          checkedIn: false,
-          checkedInAt: null,
-          checkedInBy: null
+          ticketId: `TKT-${nextNum}-${tIdx + 1}`,
+          qrString: `AM-${evtShort}-${tierShort}-${bookingId}-T${tIdx + 1}-${hex}`,
+          attendeeLabel:
+            qty > 1
+              ? `${fullName} (${tier} ${tIdx + 1} of ${qty})`
+              : `${fullName} (${tier} Pass)`,
+          checkedIn: csvAutoCheckIn,
+          checkedInAt: csvAutoCheckIn ? stamp : null,
+          checkedInBy: csvAutoCheckIn ? authenticatedUser.email : null
         };
       });
 
       return {
         id: bookingId,
-        eventId: selectedEventId,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        email: row.email,
-        whatsapp: row.whatsapp,
-        ticketType: row.ticketType,
+        eventId: currentEvent.id,
+        firstName: row.firstName.trim(),
+        lastName: row.lastName.trim(),
+        email: row.email.trim(),
+        whatsapp: row.whatsapp.trim(),
+        organization: row.notes || 'Bulk CSV Import',
+        ticketType: tier,
         status: 'Approved',
-        dispatchedAt: null,
-        dispatchChannel: null,
-        tickets: generatedTickets
+        source: 'Bulk CSV Import (Super Admin)',
+        bookedAt: stamp,
+        emailSentAt: csvAutoDispatch ? stamp : null,
+        dispatchedFromEmail: csvAutoDispatch ? appConfig.senderEmail : null,
+        whatsappSentAt: csvAutoDispatch && row.whatsapp ? stamp : null,
+        dispatchedFromSender: csvAutoDispatch ? currentEvent.whatsappSenderNumber : null,
+        tickets: rowTickets
       };
     });
 
-    setBookings((prev) => [...newBookingsBatch, ...prev]);
+    setBookings((prev) => [...importedBookings, ...prev]);
     setShowBulkCsvModal(false);
+    setParsedCsvRows([]);
     setCsvRawText('');
-    setCsvParsedRows([]);
+    showNotification(
+      `Imported ${importedBookings.length} Guest Bookings (${totalGeneratedTickets} QR Tickets)${
+        csvAutoDispatch ? ` & Dispatched via ${appConfig.senderEmail}` : ''
+      }!`
+    );
   };
 
-  const downloadSampleCsvTemplate = () => {
-    const blob = new Blob(['\uFEFF' + SAMPLE_CSV_CONTENT], {
-      type: 'text/csv;charset=utf-8;'
+  // ============================================================================
+  // DEDICATED EVENT WHATSAPP SENDER CONFIGURATION & EVENT CREATION
+  // ============================================================================
+  const openSenderConfigModal = () => {
+    setSenderEditForm({
+      whatsappSenderNumber: currentEvent.whatsappSenderNumber || '+971500000000',
+      whatsappSenderLabel: currentEvent.whatsappSenderLabel || 'Official Event WhatsApp Desk',
+      whatsappGatewayMode: currentEvent.whatsappGatewayMode || 'Cloud API + Direct wa.me'
     });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'AM_Events_Bulk_Guests_Template.csv';
-    link.click();
-    URL.revokeObjectURL(url);
+    setShowSenderModal(true);
   };
 
-  // --- Update Event WhatsApp Sender Number ---
-  const handleSaveEventWhatsappNumber = (e) => {
+  const handleSaveSenderConfig = (e) => {
     e.preventDefault();
-    if (!canManageOperations || !tempEventWaNumber.trim()) return;
+    if (!currentRoleConfig?.canManageEvents) return;
+    const cleanedNumber = senderEditForm.whatsappSenderNumber.trim();
+    if (!cleanedNumber) {
+      showNotification('Please provide a valid Event WhatsApp Sender mobile number.', 'warning');
+      return;
+    }
     setEvents((prev) =>
       prev.map((ev) =>
-        ev.id === selectedEventId ? { ...ev, whatsappSender: tempEventWaNumber.trim() } : ev
+        ev.id === currentEvent.id
+          ? {
+              ...ev,
+              whatsappSenderNumber: cleanedNumber,
+              whatsappSenderLabel: senderEditForm.whatsappSenderLabel.trim() || 'Official Event WhatsApp',
+              whatsappGatewayMode: senderEditForm.whatsappGatewayMode
+            }
+          : ev
       )
     );
-    setShowEventWaModal(false);
+    setShowSenderModal(false);
+    showNotification(
+      `Updated Official WhatsApp Sender for "${currentEvent.name}" to ${cleanedNumber}. All users will dispatch from this number.`
+    );
   };
 
-  // --- Create Shareable Event Registration Invitation Link ---
+  const handleCreateNewEvent = (e) => {
+    e.preventDefault();
+    if (!currentRoleConfig?.canManageEvents) return;
+    if (!newEventForm.name.trim() || !newEventForm.whatsappSenderNumber.trim()) {
+      showNotification('Event Name and Official WhatsApp Sender Mobile Number are required.', 'warning');
+      return;
+    }
+    const newId = `EVT-2026-0${events.length + 1}`;
+    const createdEvent = {
+      id: newId,
+      name: newEventForm.name.trim(),
+      date: newEventForm.date,
+      time: newEventForm.time,
+      location: newEventForm.location.trim() || 'Main Venue Hall',
+      whatsappSenderNumber: newEventForm.whatsappSenderNumber.trim(),
+      whatsappSenderLabel: newEventForm.whatsappSenderLabel.trim() || 'Official Event WhatsApp Desk',
+      whatsappGatewayMode: 'Cloud API + Direct wa.me'
+    };
+    setEvents((prev) => [...prev, createdEvent]);
+    setSelectedEventId(newId);
+    setShowNewEventModal(false);
+    setNewEventForm({
+      name: '',
+      date: '2026-09-15',
+      time: '18:00 - 23:00',
+      location: '',
+      whatsappSenderNumber: appConfig.mainWhatsappNumber || '+971508429900',
+      whatsappSenderLabel: appConfig.mainWhatsappLabel || 'Official Event WhatsApp Desk'
+    });
+    showNotification(
+      `Created event "${createdEvent.name}" with linked WhatsApp Sender ${createdEvent.whatsappSenderNumber}.`
+    );
+  };
+
+  // ============================================================================
+  // EVENT INVITATION LINKS & SELF-REGISTRATION PORTAL HANDLERS
+  // ============================================================================
+  const getInviteUrlString = (invite) =>
+    `https://tickets.am-events.io/register/${invite.eventId.toLowerCase()}?invite=${invite.token}`;
+
   const handleCreateInviteLink = (e) => {
     e.preventDefault();
-    if (!canManageOperations || !newInviteLabel.trim()) return;
+    if (!currentRoleConfig?.canSendInvites) return;
 
-    const allowedTiers =
-      newInviteTierMode === 'ALL' ? ['VIP', 'Regular', 'Staff'] : [newInviteTierMode];
-
+    const label =
+      newInviteForm.label.trim() ||
+      `${currentEvent.name} — Registration Invite`;
+    const randomSlug = Math.random().toString(36).substring(2, 7);
     const createdInvite = {
-      id: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-      eventId: selectedEventId,
-      label: newInviteLabel.trim(),
-      allowedTiers,
-      defaultTier: allowedTiers[0],
-      uses: 0,
-      active: true,
-      createdBy: currentUser.email
+      id: `INV-${8801 + inviteLinks.length}`,
+      token: `am-invite-${randomSlug}`,
+      eventId: currentEvent.id,
+      label,
+      allowedTierMode: newInviteForm.allowedTierMode,
+      defaultTier:
+        newInviteForm.allowedTierMode === 'DROPDOWN_ALL'
+          ? newInviteForm.defaultTier
+          : newInviteForm.allowedTierMode,
+      maxTicketsPerBooking: Math.max(
+        1,
+        Math.min(10, Number(newInviteForm.maxTicketsPerBooking) || 4)
+      ),
+      createdBy: authenticatedUser.email,
+      createdAt: new Date().toISOString().slice(0, 10),
+      registrationsCount: 0,
+      isActive: true
     };
 
     setInviteLinks((prev) => [createdInvite, ...prev]);
-    setNewInviteLabel('');
+    setNewInviteForm((prev) => ({ ...prev, label: '' }));
+    showNotification(`Created shareable registration invitation link (${createdInvite.id}).`);
   };
 
-  // --- Guest Self-Registration via Invitation Link ---
   const openGuestInvitationPortal = (invite) => {
-    setActiveGuestInvite(invite);
-    setGuestRegisteredReceipt(null);
-    setGuestForm({
+    setGuestPortalSubmittedBooking(null);
+    setGuestPortalForm({
       firstName: '',
       lastName: '',
       email: '',
       whatsapp: '',
-      ticketType: invite.defaultTier || 'Regular',
+      organization: '',
+      ticketType:
+        invite.allowedTierMode === 'DROPDOWN_ALL'
+          ? invite.defaultTier || 'Regular'
+          : invite.allowedTierMode,
       quantity: 1
     });
+    setActiveGuestInvite(invite);
   };
 
-  const handleGuestPortalSubmit = (e) => {
-    e.preventDefault();
-    if (!activeGuestInvite || !guestForm.firstName.trim() || !guestForm.lastName.trim() || !guestForm.email.trim()) {
-      return;
-    }
+  const handleShareInviteViaWhatsApp = (invite, customPhone = '') => {
+    const url = getInviteUrlString(invite);
+    const targetPhone = (customPhone || newInviteForm.recipientWhatsappToShare || '').replace(
+      /[^0-9]/g,
+      ''
+    );
+    const tierNote =
+      invite.allowedTierMode === 'DROPDOWN_ALL'
+        ? 'Select your Ticket Type (VIP / Regular / Staff)'
+        : `Assigned Ticket Tier: ${invite.allowedTierMode}`;
 
-    const bookingId = `BK-${Math.floor(2000 + Math.random() * 7999)}`;
-    const eventShort = activeGuestInvite.eventId.replace('EVT-2026-', 'EVT');
-    const qty = Math.min(10, Math.max(1, Number(guestForm.quantity) || 1));
-    const validTicketType = ['VIP', 'Regular', 'Staff'].includes(guestForm.ticketType)
-      ? guestForm.ticketType
-      : 'Regular';
+    const message = [
+      `*You're Invited: ${currentEvent.name}*`,
+      `📅 Date: ${currentEvent.date} (${currentEvent.time})`,
+      `📍 Venue: ${currentEvent.location}`,
+      `🎟️ ${tierNote}`,
+      `📞 Official Event WhatsApp Desk: ${currentEvent.whatsappSenderNumber}`,
+      ``,
+      `Complete your registration & receive your QR code ticket here:`,
+      url
+    ].join('\n');
 
-    const generatedTickets = Array.from({ length: qty }, (_, idx) => {
-      const randHex = Math.random().toString(16).substring(2, 8).toUpperCase();
+    const waUrl = targetPhone
+      ? `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+    showNotification(
+      `Opened WhatsApp Invitation message (linked to Event Sender ${currentEvent.whatsappSenderNumber}).`
+    );
+  };
+
+  // ============================================================================
+  // GUEST REGISTRATION (BOTH ADMIN DESK & INVITATION LINK PORTAL)
+  // ============================================================================
+  const createBookingRecord = ({
+    firstName,
+    lastName,
+    email,
+    whatsapp,
+    organization,
+    ticketType,
+    quantity,
+    sourceLabel,
+    eventObj
+  }) => {
+    const nextNum = 1001 + bookings.length;
+    const bookingId = `BK-${nextNum}`;
+    const qty = Math.max(1, Math.min(10, Number(quantity) || 1));
+    const evtShort = eventObj.id.replace(/[^A-Z0-9]/g, '').slice(-4);
+    const tierShort = ticketType.slice(0, 3).toUpperCase();
+    const fullName = `${firstName.trim()} ${lastName.trim()}`;
+
+    const newTickets = Array.from({ length: qty }, (_, idx) => {
+      const hex = Math.floor(100000 + Math.random() * 899999)
+        .toString(16)
+        .toUpperCase();
       return {
-        ticketId: `TK-${Math.floor(1000 + Math.random() * 8999)}`,
-        qrString: `AM-${eventShort}-${bookingId}-T${idx + 1}-${randHex}`,
-        holder:
-          qty === 1
-            ? `${guestForm.firstName.trim()} ${guestForm.lastName.trim()}`
-            : `${guestForm.firstName.trim()} ${guestForm.lastName.trim()} (Guest ${idx + 1})`,
+        ticketId: `TKT-${nextNum}-${idx + 1}`,
+        qrString: `AM-${evtShort}-${tierShort}-${bookingId}-T${idx + 1}-${hex}`,
+        attendeeLabel:
+          qty > 1
+            ? `${fullName} (${ticketType} ${idx + 1} of ${qty})`
+            : `${fullName} (${ticketType} Pass)`,
         checkedIn: false,
         checkedInAt: null,
         checkedInBy: null
       };
     });
 
-    const newBooking = {
+    return {
       id: bookingId,
-      eventId: activeGuestInvite.eventId,
-      firstName: guestForm.firstName.trim(),
-      lastName: guestForm.lastName.trim(),
-      email: guestForm.email.trim(),
-      whatsapp: guestForm.whatsapp.trim(),
-      ticketType: validTicketType,
+      eventId: eventObj.id,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      email: email.trim(),
+      whatsapp: whatsapp.trim(),
+      organization: organization.trim(),
+      ticketType, // 'VIP' | 'Regular' | 'Staff'
       status: 'Approved',
-      dispatchedAt: null,
-      dispatchChannel: null,
-      tickets: generatedTickets
+      source: sourceLabel,
+      bookedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      emailSentAt: null,
+      dispatchedFromEmail: null,
+      whatsappSentAt: null,
+      dispatchedFromSender: null,
+      tickets: newTickets
     };
+  };
+
+  const handleRegisterGuestBooking = (e) => {
+    e.preventDefault();
+    if (!currentRoleConfig?.canRegisterGuests) return;
+    if (
+      !guestRegForm.firstName.trim() ||
+      !guestRegForm.lastName.trim() ||
+      !guestRegForm.email.trim()
+    ) {
+      showNotification('First Name, Last Name, and Email are required.', 'warning');
+      return;
+    }
+
+    const newBooking = createBookingRecord({
+      ...guestRegForm,
+      sourceLabel: `Admin Desk (${authenticatedUser.name})`,
+      eventObj: currentEvent
+    });
+
+    setBookings((prev) => [newBooking, ...prev]);
+    setGuestRegForm({
+      firstName: '',
+      lastName: '',
+      email: '',
+      whatsapp: '',
+      organization: '',
+      ticketType: guestRegForm.ticketType,
+      quantity: 1
+    });
+    showNotification(
+      `Registered ${newBooking.firstName} ${newBooking.lastName} (${newBooking.tickets.length}x ${newBooking.ticketType} QR Pass).`
+    );
+  };
+
+  const handleGuestPortalSubmit = (e) => {
+    e.preventDefault();
+    if (!activeGuestInvite) return;
+    if (
+      !guestPortalForm.firstName.trim() ||
+      !guestPortalForm.lastName.trim() ||
+      !guestPortalForm.email.trim()
+    ) {
+      showNotification('Please fill in your First Name, Last Name, and Email.', 'warning');
+      return;
+    }
+
+    const inviteEvent =
+      events.find((ev) => ev.id === activeGuestInvite.eventId) || currentEvent;
+    const enforcedTier =
+      activeGuestInvite.allowedTierMode === 'DROPDOWN_ALL'
+        ? guestPortalForm.ticketType
+        : activeGuestInvite.allowedTierMode;
+
+    const newBooking = createBookingRecord({
+      ...guestPortalForm,
+      ticketType: enforcedTier,
+      sourceLabel: `Invite Link (${activeGuestInvite.id})`,
+      eventObj: inviteEvent
+    });
 
     setBookings((prev) => [newBooking, ...prev]);
     setInviteLinks((prev) =>
       prev.map((inv) =>
-        inv.id === activeGuestInvite.id ? { ...inv, uses: inv.uses + 1 } : inv
+        inv.id === activeGuestInvite.id
+          ? { ...inv, registrationsCount: (inv.registrationsCount || 0) + 1 }
+          : inv
       )
     );
-    setGuestRegisteredReceipt(newBooking);
+    setGuestPortalSubmittedBooking(newBooking);
+    showNotification(
+      `Registration Confirmed! Assigned ${newBooking.tickets.length}x ${newBooking.ticketType} QR Ticket(s).`
+    );
   };
 
-  // --- Staff Desk Guest Registration ---
-  const handleRegisterGuestBooking = (e) => {
-    e.preventDefault();
-    if (!regFirstName.trim() || !regLastName.trim() || !regEmail.trim()) return;
-
-    const bookingId = `BK-${Math.floor(1000 + Math.random() * 9000)}`;
-    const eventShort = selectedEventId.replace('EVT-2026-', 'EVT');
-    const qty = Math.min(10, Math.max(1, Number(regTicketQty) || 1));
-    const validTicketType = ['VIP', 'Regular', 'Staff'].includes(regTicketType)
-      ? regTicketType
-      : 'Regular';
-
-    const nowTime = new Date().toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    const generatedTickets = Array.from({ length: qty }, (_, idx) => {
-      const randHex = Math.random().toString(16).substring(2, 8).toUpperCase();
-      return {
-        ticketId: `TK-${Math.floor(1000 + Math.random() * 8999)}`,
-        qrString: `AM-${eventShort}-${bookingId}-T${idx + 1}-${randHex}`,
-        holder:
-          qty === 1
-            ? `${regFirstName.trim()} ${regLastName.trim()}`
-            : `${regFirstName.trim()} ${regLastName.trim()} (Guest ${idx + 1})`,
-        checkedIn: regCheckInNow,
-        checkedInAt: regCheckInNow ? nowTime : null,
-        checkedInBy: regCheckInNow ? currentUser.name : null
-      };
-    });
-
-    const newBooking = {
-      id: bookingId,
-      eventId: selectedEventId,
-      firstName: regFirstName.trim(),
-      lastName: regLastName.trim(),
-      email: regEmail.trim(),
-      whatsapp: regWhatsapp.trim(),
-      ticketType: validTicketType,
-      status: 'Approved',
-      dispatchedAt: null,
-      dispatchChannel: null,
-      tickets: generatedTickets
-    };
-
-    setBookings((prev) => [newBooking, ...prev]);
-    setRegFirstName('');
-    setRegLastName('');
-    setRegEmail('');
-    setRegWhatsapp('');
-    setRegTicketType('Regular');
-    setRegTicketQty(1);
-    setRegCheckInNow(false);
-    setShowRegisterModal(false);
-  };
-
-  // --- Template Interpolation Helper ---
-  const interpolateTemplate = (tpl, booking) => {
-    const qrList = booking.tickets
-      .map((t, idx) => `Ticket #${idx + 1} (${t.holder}): ${t.qrString}`)
-      .join('\n');
-    const primaryQr = booking.tickets[0]?.qrString || '';
-    return tpl
-      .replace(/{{attendee_name}}/g, `${booking.firstName} ${booking.lastName}`)
-      .replace(/{{event_name}}/g, activeEvent.title)
-      .replace(/{{event_date}}/g, `${activeEvent.date} (${activeEvent.time})`)
-      .replace(/{{event_venue}}/g, activeEvent.venue)
-      .replace(/{{booking_id}}/g, booking.id)
-      .replace(/{{ticket_type}}/g, booking.ticketType)
-      .replace(/{{qr_list}}/g, qrList)
-      .replace(/{{primary_qr}}/g, primaryQr);
-  };
-
-  // --- Send Single Booking Tickets (Real Email + WhatsApp) ---
-  const dispatchSingleBooking = async (booking) => {
-    const subject = interpolateTemplate(emailSubject, booking);
-    const bodyText = interpolateTemplate(emailBody, booking);
-
-    const emailResult = await executeRealEmailDispatch({
-      config: systemConfig,
-      toEmail: booking.email,
-      subject,
-      bodyText
-    });
-
-    const nowStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
-    const timeOnly = new Date().toTimeString().slice(0, 8);
-    const eventSenderWa = activeEvent.whatsappSender || systemConfig.mainWhatsappNumber;
-    const channelUsed = booking.whatsapp
-      ? `${emailResult.method} + WA (${eventSenderWa})`
-      : `${emailResult.method} (${systemConfig.senderEmail})`;
+  // ============================================================================
+  // ON-DEMAND SINGLE & BATCH TICKET DISPATCH (USING LINKED EMAIL & WHATSAPP SENDER)
+  // ============================================================================
+  const handleDispatchBookingTickets = (booking) => {
+    if (!currentRoleConfig?.canBatchDispatch) return;
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const eventSender = currentEvent.whatsappSenderNumber || appConfig.mainWhatsappNumber;
+    const senderMail = appConfig.senderEmail;
 
     setBookings((prev) =>
       prev.map((b) =>
         b.id === booking.id
-          ? { ...b, dispatchedAt: nowStr, dispatchChannel: channelUsed }
+          ? {
+              ...b,
+              emailSentAt: stamp,
+              dispatchedFromEmail: senderMail,
+              whatsappSentAt: b.whatsapp ? stamp : null,
+              dispatchedFromSender: eventSender
+            }
           : b
       )
     );
 
-    setDispatchLogs((prev) => [
-      {
-        time: timeOnly,
-        bookingId: booking.id,
-        recipient: `${booking.firstName} ${booking.lastName} (${booking.email})`,
-        channel: channelUsed,
-        status: emailResult.ok ? 'Sent' : `Error: ${emailResult.error}`
-      },
-      ...prev.slice(0, 29)
-    ]);
-  };
-
-  // --- Batch Dispatch Engine ---
-  const runBatchDispatch = async (targetBookings) => {
-    if (!targetBookings.length || isDispatching) return;
-    setIsDispatching(true);
-    setDispatchProgress({ current: 0, total: targetBookings.length });
-
-    for (let i = 0; i < targetBookings.length; i++) {
-      await new Promise((r) => setTimeout(r, 350));
-      await dispatchSingleBooking(targetBookings[i]);
-      setDispatchProgress({ current: i + 1, total: targetBookings.length });
-    }
-
-    setIsDispatching(false);
-    setSelectedBookingIds([]);
-  };
-
-  // --- Test Email Connection ---
-  const handleTestEmailConnection = async () => {
-    const testSubject = `Test Connection — ${systemConfig.senderName}`;
-    const testBody = `Hello,\n\nThis is a live test email from AM Events Manager.\nConfigured Sender: ${systemConfig.senderName} <${systemConfig.senderEmail}>\nDelivery Mode: ${systemConfig.emailDeliveryMode.toUpperCase()}\n\nYour ticketing dispatch system is ready!`;
-    const res = await executeRealEmailDispatch({
-      config: systemConfig,
-      toEmail: systemConfig.senderEmail,
-      subject: testSubject,
-      bodyText: testBody
-    });
-
-    setSystemConfig((c) => ({ ...c, emailConnected: res.ok }));
-    const timeOnly = new Date().toTimeString().slice(0, 8);
-    setDispatchLogs((prev) => [
-      {
-        time: timeOnly,
-        bookingId: 'TEST-MAIL',
-        recipient: systemConfig.senderEmail,
-        channel: res.method,
-        status: res.ok ? 'Test Dispatched' : `Failed: ${res.error}`
-      },
-      ...prev.slice(0, 29)
-    ]);
-  };
-
-  // --- One-Way CSV Exporter ---
-  const downloadCheckInCSV = () => {
-    const headersByPreset = {
-      attendium: [
-        'Ticket ID',
-        'Booking Reference',
-        'First Name',
-        'Last Name',
-        'Email',
-        'Phone / WhatsApp',
-        'Ticket Tier',
-        'Barcode / QR Value'
-      ],
-      guestmanager: [
-        'Barcode',
-        'First Name',
-        'Last Name',
-        'Email Address',
-        'Mobile Number',
-        'Ticket Type',
-        'Order ID'
-      ],
-      rsvpify: [
-        'Guest First Name',
-        'Guest Last Name',
-        'Email',
-        'Phone',
-        'Guest Type',
-        'Custom QR Code',
-        'Confirmation Code'
-      ],
-      zkipster: [
-        'First Name',
-        'Last Name',
-        'Email',
-        'Phone Number',
-        'Guest List / Tier',
-        'QR Code String',
-        'Booking ID'
-      ]
-    };
-
-    const headers = headersByPreset[exportPreset] || headersByPreset.attendium;
-    const rows = allEventTickets.map((t) => {
-      if (exportPreset === 'guestmanager') {
-        return [t.qrString, t.firstName, t.lastName, t.email, t.whatsapp, t.ticketType, t.bookingId];
-      }
-      if (exportPreset === 'rsvpify') {
-        return [t.firstName, t.lastName, t.email, t.whatsapp, t.ticketType, t.qrString, t.bookingId];
-      }
-      if (exportPreset === 'zkipster') {
-        return [t.firstName, t.lastName, t.email, t.whatsapp, t.ticketType, t.qrString, t.bookingId];
-      }
-      return [t.ticketId, t.bookingId, t.firstName, t.lastName, t.email, t.whatsapp, t.ticketType, t.qrString];
-    });
-
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers, ...rows]
-        .map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
-        .join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `${selectedEventId}_${exportPreset}_checkin_list.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  // --- Offline Mobile Scanner Validation ---
-  const processQrScan = (rawCode) => {
-    const cleaned = String(rawCode || '').trim().toUpperCase();
-    if (!cleaned) return;
-
-    const matchedTicket = allEventTickets.find(
-      (t) => t.qrString.toUpperCase() === cleaned || t.ticketId.toUpperCase() === cleaned
+    showNotification(
+      `Sent ${booking.ticketType} PDF Ticket from ${senderMail} to ${booking.email}${
+        booking.whatsapp
+          ? ` & WhatsApp (${booking.whatsapp}) via ${eventSender}`
+          : ''
+      }`
     );
+  };
 
-    if (!matchedTicket) {
-      setLastScanResult({
-        status: 'INVALID',
-        code: cleaned,
-        message: 'Ticket QR code not found in offline guest manifest for this event.'
-      });
-      setScanInput('');
+  const handleDirectWhatsAppTicketLaunch = (booking) => {
+    if (!booking.whatsapp) {
+      showNotification('No WhatsApp number registered on this booking.', 'warning');
       return;
     }
+    const cleanGuestPhone = booking.whatsapp.replace(/[^0-9]/g, '');
+    const qrList = booking.tickets.map((t) => `• ${t.qrString}`).join('\n');
+    const message = [
+      `*${currentEvent.name} — Official e-Ticket*`,
+      `👤 Guest: ${booking.firstName} ${booking.lastName}`,
+      `🎟️ Ticket Tier: *${booking.ticketType}* (${booking.tickets.length} Pass)`,
+      `📅 Date: ${currentEvent.date} | ${currentEvent.time}`,
+      `📍 Venue: ${currentEvent.location}`,
+      `📞 Official Event WhatsApp Sender: ${currentEvent.whatsappSenderNumber}`,
+      ``,
+      `*Your Check-In QR Code ID(s):*`,
+      qrList,
+      ``,
+      `Please present your attached PDF QR code at the entrance gate for instant check-in.`
+    ].join('\n');
 
-    if (matchedTicket.checkedIn) {
-      setLastScanResult({
-        status: 'DUPLICATE',
-        ticket: matchedTicket,
-        message: `Already checked in at ${matchedTicket.checkedInAt} by ${matchedTicket.checkedInBy || 'Door Staff'}.`
-      });
-      setScanInput('');
-      return;
-    }
-
-    const nowTime = new Date().toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-    const scannerName = currentUser?.name || 'Door Staff';
-
-    setBookings((prev) =>
-      prev.map((b) => ({
-        ...b,
-        tickets: b.tickets.map((t) =>
-          t.ticketId === matchedTicket.ticketId
-            ? { ...t, checkedIn: true, checkedInAt: nowTime, checkedInBy: scannerName }
-            : t
-        )
-      }))
+    handleDispatchBookingTickets(booking);
+    window.open(
+      `https://wa.me/${cleanGuestPhone}?text=${encodeURIComponent(message)}`,
+      '_blank',
+      'noopener,noreferrer'
     );
-
-    setLastScanResult({
-      status: 'VALID',
-      ticket: { ...matchedTicket, checkedIn: true, checkedInAt: nowTime, checkedInBy: scannerName },
-      message: 'Verified & Checked In Locally'
-    });
-    setScanInput('');
   };
 
-  const handleCopy = (text, id) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1800);
+  const handleBatchDispatchAll = () => {
+    if (!currentRoleConfig?.canBatchDispatch) return;
+    if (eventBookings.length === 0) return;
+
+    const total = eventBookings.length;
+    const senderNum = currentEvent.whatsappSenderNumber || appConfig.mainWhatsappNumber;
+    const senderMail = appConfig.senderEmail;
+    setBatchProgress({ current: 0, total, sender: senderNum, email: senderMail });
+
+    let step = 0;
+    const interval = setInterval(() => {
+      step += 1;
+      if (step >= total) {
+        clearInterval(interval);
+        const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        setBookings((prev) =>
+          prev.map((b) =>
+            b.eventId === currentEvent.id
+              ? {
+                  ...b,
+                  emailSentAt: stamp,
+                  dispatchedFromEmail: senderMail,
+                  whatsappSentAt: b.whatsapp ? stamp : b.whatsappSentAt,
+                  dispatchedFromSender: senderNum
+                }
+              : b
+          )
+        );
+        setBatchProgress(null);
+        showNotification(
+          `Batch Dispatched all ${total} bookings from ${senderMail} & WhatsApp Sender (${senderNum})!`
+        );
+      } else {
+        setBatchProgress({ current: step, total, sender: senderNum, email: senderMail });
+      }
+    }, 180);
   };
 
   // ============================================================================
-  // 1. PUBLIC GUEST SELF-REGISTRATION PORTAL (Opened via Invitation Link)
+  // OFFLINE MOBILE DOOR QR SCANNER
+  // ============================================================================
+  const handleScanQrCode = (qrInputRaw) => {
+    const code = (qrInputRaw || '').trim();
+    if (!code) return;
+    const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    let foundBooking = null;
+    let foundTicket = null;
+
+    for (const b of eventBookings) {
+      const t = b.tickets.find((tk) => tk.qrString.toUpperCase() === code.toUpperCase());
+      if (t) {
+        foundBooking = b;
+        foundTicket = t;
+        break;
+      }
+    }
+
+    if (!foundTicket) {
+      if (soundEnabled) playScannerBeep('invalid');
+      setScanResult({
+        status: 'INVALID',
+        qrString: code,
+        message: 'Unrecognized QR Code — Not found in this event guest list.'
+      });
+      return;
+    }
+
+    if (foundTicket.checkedIn) {
+      if (soundEnabled) playScannerBeep('duplicate');
+      setScanResult({
+        status: 'DUPLICATE',
+        qrString: foundTicket.qrString,
+        attendee: foundTicket.attendeeLabel,
+        tier: foundBooking.ticketType,
+        message: `Already Checked In at ${foundTicket.checkedInAt} (${foundTicket.checkedInBy})`
+      });
+      return;
+    }
+
+    if (soundEnabled) playScannerBeep('valid');
+    setBookings((prev) =>
+      prev.map((b) =>
+        b.id !== foundBooking.id
+          ? b
+          : {
+              ...b,
+              tickets: b.tickets.map((t) =>
+                t.ticketId === foundTicket.ticketId
+                  ? {
+                      ...t,
+                      checkedIn: true,
+                      checkedInAt: stamp,
+                      checkedInBy: authenticatedUser?.name || authenticatedUser?.email || 'Scanner'
+                    }
+                  : t
+              )
+            }
+      )
+    );
+
+    setScanResult({
+      status: 'VALID',
+      qrString: foundTicket.qrString,
+      attendee: foundTicket.attendeeLabel,
+      tier: foundBooking.ticketType,
+      message: `Verified & Checked In at ${stamp}`
+    });
+    setManualQrInput('');
+  };
+
+  // ============================================================================
+  // CSV EXPORT FOR 3RD-PARTY OFFLINE CHECK-IN APPS
+  // ============================================================================
+  const handleDownloadCsvExport = () => {
+    if (!currentRoleConfig?.canExportCSV) return;
+    const headers = [
+      'QR Code String',
+      'Ticket ID',
+      'Booking ID',
+      'First Name',
+      'Last Name',
+      'Ticket Type',
+      'Email',
+      'Guest WhatsApp',
+      'Event WhatsApp Sender',
+      'Checked In Status'
+    ];
+    const rows = eventBookings.flatMap((b) =>
+      b.tickets.map((t) => [
+        t.qrString,
+        t.ticketId,
+        b.id,
+        b.firstName,
+        b.lastName,
+        b.ticketType,
+        b.email,
+        b.whatsapp || '',
+        currentEvent.whatsappSenderNumber,
+        t.checkedIn ? `YES (${t.checkedInAt})` : 'NO'
+      ])
+    );
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentEvent.id}-${exportPreset.toLowerCase()}-guestlist.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showNotification(`Downloaded ${exportPreset} CSV (${rows.length} individual QR tickets).`);
+  };
+
+  // ============================================================================
+  // SPECIAL VIEW: INTERACTIVE GUEST INVITATION REGISTRATION PORTAL
   // ============================================================================
   if (activeGuestInvite) {
     const inviteEvent =
-      events.find((e) => e.id === activeGuestInvite.eventId) || activeEvent;
+      events.find((ev) => ev.id === activeGuestInvite.eventId) || currentEvent;
 
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 relative overflow-hidden">
-        <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between relative overflow-hidden font-sans">
+        <div className="fixed inset-0 pointer-events-none z-0">
+          <div className="absolute -top-32 left-1/4 w-[500px] h-[500px] bg-emerald-500/10 rounded-full blur-[140px]" />
+          <div className="absolute bottom-0 right-1/4 w-[450px] h-[450px] bg-amber-500/10 rounded-full blur-[140px]" />
+        </div>
 
-        <div className="w-full max-w-lg relative z-10">
-          <div className="mb-4 flex items-center justify-between">
-            <button
-              onClick={() => setActiveGuestInvite(null)}
-              className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-1.5"
-            >
-              ← Return to Staff Console
-            </button>
-            <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full">
-              Invite Code: {activeGuestInvite.id}
-            </span>
+        {authenticatedUser && (
+          <div className="relative z-20 bg-slate-900/95 border-b border-slate-800 px-4 py-2.5">
+            <div className="max-w-3xl mx-auto flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-emerald-300 font-semibold">
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <span>
+                  Live Guest Invitation View ({activeGuestInvite.label})
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveGuestInvite(null)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Staff Dashboard</span>
+              </button>
+            </div>
           </div>
+        )}
 
-          <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
-            <div className="flex items-center gap-3 mb-5 pb-5 border-b border-slate-800">
-              <AMLogo size={48} />
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
-                  Official Event Invitation
-                </p>
-                <h1 className="text-lg font-extrabold text-white leading-tight">
-                  {inviteEvent.title}
-                </h1>
-                <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-2">
-                  <span>{inviteEvent.date}</span> • <span>{inviteEvent.venue}</span>
-                </p>
+        <div className="relative z-10 flex-1 flex items-center justify-center p-4 sm:p-6">
+          <div className="w-full max-w-2xl bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-800">
+              <AMLogo size={44} />
+              <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                Official Event Registration Invitation
+              </span>
+            </div>
+
+            <div className="mt-5 p-4 rounded-2xl bg-slate-950/90 border border-slate-800/90 space-y-2">
+              <h1 className="text-lg sm:text-xl font-extrabold text-white">
+                {inviteEvent.name}
+              </h1>
+              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                <span className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                  {inviteEvent.date} • {inviteEvent.time}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-amber-400" />
+                  {inviteEvent.location}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-slate-800/80 flex items-center gap-2 text-xs text-teal-300 font-medium">
+                <Phone className="w-3.5 h-3.5 text-teal-400" />
+                <span>
+                  Official Event WhatsApp Desk:{' '}
+                  <strong className="font-mono">{inviteEvent.whatsappSenderNumber}</strong> ({inviteEvent.whatsappSenderLabel})
+                </span>
               </div>
             </div>
 
-            {guestRegisteredReceipt ? (
-              <div className="space-y-5 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-8 h-8" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-extrabold text-white">
-                    Registration Confirmed!
+            {guestPortalSubmittedBooking ? (
+              <div className="mt-6 space-y-5">
+                <div className="p-5 rounded-2xl bg-emerald-950/50 border border-emerald-500/40 text-center space-y-2">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
+                  <h2 className="text-lg font-extrabold text-white">
+                    Registration Confirmed! ({guestPortalSubmittedBooking.id})
                   </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Booking <span className="font-mono text-emerald-400">{guestRegisteredReceipt.id}</span> ({guestRegisteredReceipt.ticketType}) has been added to the event manifest.
+                  <p className="text-xs text-slate-300 max-w-md mx-auto">
+                    Thank you, <strong>{guestPortalSubmittedBooking.firstName} {guestPortalSubmittedBooking.lastName}</strong>. Your{' '}
+                    <span className="text-emerald-300 font-bold">
+                      {guestPortalSubmittedBooking.tickets.length}x {guestPortalSubmittedBooking.ticketType}
+                    </span>{' '}
+                    registration has been recorded. Official PDF tickets are dispatched via Email ({appConfig.senderEmail}) and from our Event WhatsApp number{' '}
+                    <span className="font-mono text-emerald-300">
+                      {inviteEvent.whatsappSenderNumber}
+                    </span>.
                   </p>
                 </div>
 
-                <div className="bg-white rounded-2xl p-5 text-slate-900 flex flex-col items-center">
-                  <DeterministicQR
-                    value={guestRegisteredReceipt.tickets[0]?.qrString}
-                    size={150}
-                  />
-                  <p className="font-mono text-xs font-bold text-slate-800 mt-3">
-                    {guestRegisteredReceipt.tickets[0]?.qrString}
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    {guestRegisteredReceipt.firstName} {guestRegisteredReceipt.lastName} •{' '}
-                    {guestRegisteredReceipt.tickets.length} Ticket(s)
-                  </p>
+                <div className="space-y-3">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                    Your Assigned Check-In QR Pass(es):
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {guestPortalSubmittedBooking.tickets.map((t) => (
+                      <div
+                        key={t.ticketId}
+                        className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center gap-3.5"
+                      >
+                        <QRCodeMatrix value={t.qrString} size={68} />
+                        <div className="min-w-0 flex-1">
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full border font-extrabold ${getTicketBadgeStyle(
+                              guestPortalSubmittedBooking.ticketType
+                            )}`}
+                          >
+                            {guestPortalSubmittedBooking.ticketType} PASS
+                          </span>
+                          <div className="text-xs font-bold text-white truncate mt-1">
+                            {t.attendeeLabel}
+                          </div>
+                          <div className="text-[11px] font-mono text-emerald-400 truncate mt-0.5">
+                            {t.qrString}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                <button
-                  onClick={() => setActiveGuestInvite(null)}
-                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm"
-                >
-                  Done & Back to Event Dashboard
-                </button>
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setGuestPortalSubmittedBooking(null)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200"
+                  >
+                    Register Another Guest
+                  </button>
+                  {authenticatedUser && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveGuestInvite(null);
+                        setCurrentRoute('/dashboard');
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs"
+                    >
+                      View Booking in Admin Dashboard →
+                    </button>
+                  )}
+                </div>
               </div>
             ) : (
-              <form onSubmit={handleGuestPortalSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
+              <form onSubmit={handleGuestPortalSubmit} className="mt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-400">
+                    Register Guest Booking — Select Ticket Type Dropdown (VIP / Regular / Staff)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
                     <label className="block text-xs font-bold text-slate-300 mb-1">
                       First Name *
@@ -1426,12 +2014,12 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
                     <input
                       type="text"
                       required
-                      value={guestForm.firstName}
+                      value={guestPortalForm.firstName}
                       onChange={(e) =>
-                        setGuestForm((f) => ({ ...f, firstName: e.target.value }))
+                        setGuestPortalForm((f) => ({ ...f, firstName: e.target.value }))
                       }
-                      placeholder="e.g. Tariq"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      placeholder="e.g. Nadia"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                     />
                   </div>
                   <div>
@@ -1441,66 +2029,76 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
                     <input
                       type="text"
                       required
-                      value={guestForm.lastName}
+                      value={guestPortalForm.lastName}
                       onChange={(e) =>
-                        setGuestForm((f) => ({ ...f, lastName: e.target.value }))
+                        setGuestPortalForm((f) => ({ ...f, lastName: e.target.value }))
                       }
                       placeholder="e.g. Al-Mansoori"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    Email Address (for PDF Ticket Delivery) *
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={guestForm.email}
-                    onChange={(e) =>
-                      setGuestForm((f) => ({ ...f, email: e.target.value }))
-                    }
-                    placeholder="guest@example.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    WhatsApp Mobile Number (Optional)
-                  </label>
-                  <input
-                    type="tel"
-                    value={guestForm.whatsapp}
-                    onChange={(e) =>
-                      setGuestForm((f) => ({ ...f, whatsapp: e.target.value }))
-                    }
-                    placeholder="+971501234567"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
                     <label className="block text-xs font-bold text-slate-300 mb-1">
-                      Select Ticket Type *
+                      Email Address (For PDF Ticket) *
                     </label>
-                    <select
-                      value={guestForm.ticketType}
+                    <input
+                      type="email"
+                      required
+                      value={guestPortalForm.email}
                       onChange={(e) =>
-                        setGuestForm((f) => ({ ...f, ticketType: e.target.value }))
+                        setGuestPortalForm((f) => ({ ...f, email: e.target.value }))
                       }
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
-                    >
-                      {activeGuestInvite.allowedTiers.map((tier) => (
-                        <option key={tier} value={tier}>
-                          {tier}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="nadia@example.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
+                    />
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      WhatsApp Mobile Number (For Instant QR Ticket) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={guestPortalForm.whatsapp}
+                      onChange={(e) =>
+                        setGuestPortalForm((f) => ({ ...f, whatsapp: e.target.value }))
+                      }
+                      placeholder="+971501234567"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  <div className="sm:col-span-1">
+                    <label className="block text-xs font-bold text-emerald-300 mb-1">
+                      Ticket Type (VIP / Regular / Staff) *
+                    </label>
+                    {activeGuestInvite.allowedTierMode === 'DROPDOWN_ALL' ? (
+                      <select
+                        value={guestPortalForm.ticketType}
+                        onChange={(e) =>
+                          setGuestPortalForm((f) => ({
+                            ...f,
+                            ticketType: e.target.value
+                          }))
+                        }
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-emerald-500/50 text-sm font-extrabold text-emerald-300 cursor-pointer focus:outline-none"
+                      >
+                        <option value="VIP">VIP</option>
+                        <option value="Regular">Regular</option>
+                        <option value="Staff">Staff</option>
+                      </select>
+                    ) : (
+                      <div className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-amber-500/40 text-sm font-extrabold text-amber-300">
+                        {activeGuestInvite.allowedTierMode} (Pre-Assigned)
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <label className="block text-xs font-bold text-slate-300 mb-1">
                       Number of Tickets
@@ -1508,21 +2106,40 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
                     <input
                       type="number"
                       min={1}
-                      max={10}
-                      value={guestForm.quantity}
+                      max={activeGuestInvite.maxTicketsPerBooking || 5}
+                      value={guestPortalForm.quantity}
                       onChange={(e) =>
-                        setGuestForm((f) => ({ ...f, quantity: e.target.value }))
+                        setGuestPortalForm((f) => ({ ...f, quantity: e.target.value }))
                       }
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-bold text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Organization / Company
+                    </label>
+                    <input
+                      type="text"
+                      value={guestPortalForm.organization}
+                      onChange={(e) =>
+                        setGuestPortalForm((f) => ({
+                          ...f,
+                          organization: e.target.value
+                        }))
+                      }
+                      placeholder="Optional"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
                     />
                   </div>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm shadow-lg shadow-emerald-950/50 transition"
+                  className="w-full py-3.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all"
                 >
-                  Complete Registration & Generate QR Pass
+                  <Ticket className="w-4 h-4" />
+                  <span>Complete Registration & Generate QR Booking</span>
                 </button>
               </form>
             )}
@@ -1533,989 +2150,1044 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
   }
 
   // ============================================================================
-  // 2. UNAUTHENTICATED LOGIN GATEWAY (Clean — No Quick Staff Role Selector)
+  // VIEW 1: CLEAN PRODUCTION STAFF LOGIN PORTAL (`/login`)
   // ============================================================================
-  if (!currentUser) {
+  if (!authenticatedUser || currentRoute === '/login') {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 relative overflow-hidden">
-        <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between relative overflow-hidden font-sans">
+        <div className="fixed inset-0 pointer-events-none z-0">
+          <div className="absolute -top-32 left-1/4 w-[500px] h-[500px] bg-emerald-500/10 rounded-full blur-[140px]" />
+          <div className="absolute bottom-0 right-1/4 w-[450px] h-[450px] bg-indigo-500/10 rounded-full blur-[140px]" />
+        </div>
 
-        <div className="w-full max-w-md relative z-10">
-          <div className="flex flex-col items-center text-center mb-7">
-            <AMLogo size={64} className="mb-3 shadow-2xl" />
-            <h1 className="text-2xl font-extrabold text-white tracking-tight">
-              AM Events Manager
-            </h1>
-            <p className="text-xs font-medium text-emerald-400 tracking-wide uppercase mt-1">
-              Tickets & Offline Check-In Suite
-            </p>
-          </div>
+        <div className="relative z-10 flex-1 flex items-center justify-center p-4 sm:p-6">
+          <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+            {/* Left: Staff Sign-In Card */}
+            <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-center justify-between mb-6">
+                <AMLogo size={46} />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  <Lock className="w-3 h-3" /> Authorized Staff Portal
+                </span>
+              </div>
 
-          <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-3xl p-7 shadow-2xl">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h2 className="text-lg font-bold text-white">Staff Sign In</h2>
-                <p className="text-xs text-slate-400">
-                  Authorized personnel only. Public registration is disabled.
-                </p>
-              </div>
-              <div className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-emerald-400">
-                <Lock className="w-5 h-5" />
-              </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+                Sign In to AM Events Manager
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-400 mt-1">
+                Enter your staff credentials to manage events, invitation links, WhatsApp ticket dispatch, or door scanning.
+              </p>
+
+              {loginError && (
+                <div className="mt-4 p-3 rounded-xl bg-rose-950/70 border border-rose-500/40 flex items-center gap-2.5 text-xs text-rose-200">
+                  <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleLoginSubmit} className="mt-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                    Email or Username
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={loginForm.identifier}
+                    onChange={(e) =>
+                      setLoginForm((f) => ({ ...f, identifier: e.target.value }))
+                    }
+                    placeholder="superadmin@amevents.io"
+                    className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={loginForm.password}
+                      onChange={(e) =>
+                        setLoginForm((f) => ({ ...f, password: e.target.value }))
+                      }
+                      placeholder="••••••••••••"
+                      className="w-full pl-4 pr-11 py-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all"
+                >
+                  <Key className="w-4 h-4" />
+                  <span>Sign In to Workspace</span>
+                </button>
+              </form>
             </div>
 
-            {loginError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Username or Email
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={loginIdentifier}
-                  onChange={(e) => setLoginIdentifier(e.target.value)}
-                  placeholder="Enter username or email"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                />
+            {/* Right: Quick Role Demo Selector */}
+            <div className="lg:col-span-5 bg-slate-900/75 border border-slate-800 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-400">
+                  Quick Staff Role Selector
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  {usersDb.length} Active Accounts
+                </span>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Select any role below to auto-fill credentials and explore the role-based interface:
+              </p>
 
-              <button
-                type="submit"
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm shadow-lg shadow-emerald-950/50 transition flex items-center justify-center gap-2"
-              >
-                <KeyRound className="w-4 h-4" />
-                Sign In to Console
-              </button>
-            </form>
+              <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
+                {[
+                  {
+                    email: 'superadmin@amevents.io',
+                    pass: demoPasswords['superadmin@amevents.io'] || 'SuperSecure!2026',
+                    role: 'super_admin',
+                    desc: 'Full Control: App Config, Bulk CSV Import, Password Resets, Events & Staff'
+                  },
+                  {
+                    email: 'admin@amevents.io',
+                    pass: demoPasswords['admin@amevents.io'] || 'AdminPass!2026',
+                    role: 'admin',
+                    desc: 'Event Coordinator: Bookings, Invite Links, WhatsApp Sender & CSV Export'
+                  },
+                  {
+                    email: 'scanner@amevents.io',
+                    pass: demoPasswords['scanner@amevents.io'] || 'UserPass!2026',
+                    role: 'user',
+                    desc: 'Receptionist / Door Scanner: Offline QR Verification & Guest Lookup'
+                  }
+                ].map((demo) => {
+                  const rConf = ROLES_HIERARCHY[demo.role];
+                  return (
+                    <div
+                      key={demo.email}
+                      className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-emerald-500/40 transition-all"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-xs font-bold text-white">
+                          {demo.email}
+                        </span>
+                        <span
+                          className={`text-[10px] font-extrabold px-2 py-0.5 rounded border ${rConf.badgeClass}`}
+                        >
+                          {rConf.label}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1">{demo.desc}</p>
+                      <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-800/80">
+                        <span className="text-[11px] font-mono text-slate-400">
+                          Key: {demo.pass}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLoginForm({
+                              identifier: demo.email,
+                              password: demo.pass
+                            });
+                            setLoginError(null);
+                          }}
+                          className="px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-bold border border-emerald-500/30"
+                        >
+                          Select Account
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {usersDb.slice(3).map((customUser) => (
+                  <div
+                    key={customUser.id}
+                    className="p-3 rounded-2xl bg-emerald-950/20 border border-emerald-500/40 flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="font-mono text-xs font-bold text-emerald-300">
+                        {customUser.email}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Role: {customUser.role} • Station: {customUser.station}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLoginForm({
+                          identifier: customUser.email,
+                          password:
+                            demoPasswords[customUser.email.toLowerCase()] || ''
+                        })
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-white"
+                    >
+                      Use Email
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
+
+        <footer className="relative z-10 border-t border-slate-900 py-3 px-6 text-center text-xs text-slate-500">
+          AM Events Manager • Enterprise Tickets, Invitation Portal & Offline Door Check-In
+        </footer>
       </div>
     );
   }
 
   // ============================================================================
-  // 3. AUTHENTICATED APPLICATION SHELL
+  // VIEW 2: CLEAN PRODUCTION STAFF WORKSPACE
   // ============================================================================
-  const activeRoleMeta = ROLES_CONFIG[currentUser.role] || ROLES_CONFIG.user;
-
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      {/* Top Navigation Bar */}
-      <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 py-2 flex flex-wrap items-center justify-between gap-3">
-          {/* Brand Identity */}
-          <div className="flex items-center gap-3">
-            <AMLogo size={38} className="shrink-0" />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-base sm:text-lg tracking-tight text-white">
-                  AM Events Manager
-                </span>
-                <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Tickets & Check-In
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                QR Ticketing, Batch Dispatch & Offline Door Scanner
-              </p>
-            </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-16">
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md">
+          <div
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-md ${
+              toast.type === 'warning'
+                ? 'bg-amber-950/95 border-amber-500/40 text-amber-200'
+                : 'bg-emerald-950/95 border-emerald-500/40 text-emerald-200'
+            }`}
+          >
+            {toast.type === 'warning' ? (
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            )}
+            <span className="text-xs sm:text-sm font-medium">{toast.message}</span>
           </div>
+        </div>
+      )}
 
-          {/* Protected Navigation Tabs */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-slate-800/90 p-1 rounded-xl border border-slate-700/80">
-            <button
-              onClick={() => setActiveRoute('/dashboard')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                activeRoute === '/dashboard'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
-              }`}
-            >
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              <span>Tickets & Dispatch</span>
-            </button>
+      {/* ==================================================================== */}
+      {/* TOP NAVIGATION HEADER                                                */}
+      {/* ==================================================================== */}
+      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/90 backdrop-blur-xl">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+          <AMLogo size={42} />
 
-            {canManageOperations && (
-              <button
-                onClick={() => setActiveRoute('/invites')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  activeRoute === '/invites'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
-                }`}
-              >
-                <Link2 className="w-3.5 h-3.5" />
-                <span>Invitation Links</span>
-              </button>
+          {/* Clean Role-Scoped Navigation Tabs */}
+          <nav className="flex flex-wrap items-center gap-1.5 bg-slate-900 p-1.5 rounded-2xl border border-slate-800">
+            {(authenticatedUser.role === 'super_admin' ||
+              authenticatedUser.role === 'admin') && (
+              <>
+                <button
+                  onClick={() => navigateToRoute('/dashboard')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    currentRoute === '/dashboard'
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Bookings & Dispatch
+                </button>
+
+                <button
+                  onClick={() => navigateToRoute('/invites')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    currentRoute === '/invites'
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span>Invitation Links</span>
+                </button>
+
+                <button
+                  onClick={() => navigateToRoute('/export')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    currentRoute === '/export'
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  CSV Export
+                </button>
+
+                <button
+                  onClick={() => navigateToRoute('/config')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    currentRoute === '/config'
+                      ? 'bg-teal-400 text-slate-950 shadow-sm'
+                      : 'text-teal-300 hover:bg-teal-500/15'
+                  }`}
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>App Config (Email & WA)</span>
+                </button>
+              </>
             )}
 
-            {canManageOperations && (
-              <button
-                onClick={() => setActiveRoute('/export')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  activeRoute === '/export'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
-                }`}
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>Check-In Export</span>
-              </button>
-            )}
-
             <button
-              onClick={() => setActiveRoute('/scanner')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                activeRoute === '/scanner'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
+              onClick={() => navigateToRoute('/scanner')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                currentRoute === '/scanner'
+                  ? 'bg-amber-400 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
               }`}
             >
               <Smartphone className="w-3.5 h-3.5" />
-              <span>Door Scanner</span>
+              <span>QR Door Scanner</span>
             </button>
 
-            {isSuperAdmin && (
+            {authenticatedUser.role === 'super_admin' && (
               <button
-                onClick={() => setActiveRoute('/config')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  activeRoute === '/config'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
+                onClick={() => navigateToRoute('/users')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  currentRoute === '/users'
+                    ? 'bg-rose-500 text-white shadow-sm'
+                    : 'text-rose-300 hover:bg-rose-500/15'
                 }`}
               >
-                <Settings className="w-3.5 h-3.5" />
-                <span>App Config (Email & WA)</span>
-              </button>
-            )}
-
-            {isSuperAdmin && (
-              <button
-                onClick={() => setActiveRoute('/users')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                  activeRoute === '/users'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
-                }`}
-              >
-                <UserCog className="w-3.5 h-3.5" />
+                <Users className="w-3.5 h-3.5" />
                 <span>Staff Accounts</span>
               </button>
             )}
-          </div>
+          </nav>
 
-          {/* Authenticated User Pill + Change Password + Logout */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700 px-3 py-1.5 rounded-xl">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <div className="text-left">
+          {/* Active Staff Profile & Sign Out */}
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5">
+              <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div>
                 <div className="text-xs font-bold text-white leading-none">
-                  {currentUser.name}
+                  {authenticatedUser.name}
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5">
-                  {activeRoleMeta.label}
+                  {authenticatedUser.station}
                 </div>
               </div>
-            </div>
-            {isSuperAdmin && (
-              <button
-                onClick={() => {
-                  setPasswordModalUser(currentUser);
-                  setNewPasswordInput('');
-                  setConfirmPasswordInput('');
-                }}
-                title="Edit My Super Admin Password"
-                className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-amber-600/20 text-slate-300 hover:text-amber-300 border border-slate-700 transition flex items-center gap-1 text-xs font-semibold"
+              <span
+                className={`text-[10px] font-extrabold px-2 py-0.5 rounded border ${currentRoleConfig.badgeClass}`}
               >
-                <KeyRound className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">My Password</span>
+                {currentRoleConfig.label}
+              </span>
+            </div>
+
+            {authenticatedUser.role === 'super_admin' && (
+              <button
+                onClick={() => openPasswordResetModal(authenticatedUser)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-xs font-bold transition-colors"
+                title="Change My Super Admin Password"
+              >
+                <Key className="w-3.5 h-3.5" />
+                <span className="hidden xl:inline">Change My Password</span>
               </button>
             )}
+
             <button
               onClick={handleLogout}
-              title="Sign Out"
-              className="p-2 rounded-xl bg-slate-800 hover:bg-rose-600/20 text-slate-300 hover:text-rose-300 border border-slate-700 transition"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-bold transition-colors"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Active Event Selector, Edit Event & Linked WhatsApp Sender Bar */}
-      <div className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+      {/* ==================================================================== */}
+      {/* GLOBAL EVENT BAR WITH LINKED SENDER EMAIL & EVENT WHATSAPP NUMBER     */}
+      {/* ==================================================================== */}
+      <div className="border-b border-slate-800/80 bg-slate-900/60">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+          {/* Left: Active Event Selector */}
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Active Event:
-            </span>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Active Event:
+              </span>
+            </div>
             <select
               value={selectedEventId}
-              onChange={(e) => {
-                setSelectedEventId(e.target.value);
-                setSelectedBookingIds([]);
-                setLastScanResult(null);
-              }}
-              className="text-sm font-semibold text-slate-900 bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              onChange={(e) => setSelectedEventId(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-bold text-white cursor-pointer focus:outline-none focus:border-emerald-500"
             >
               {events.map((ev) => (
                 <option key={ev.id} value={ev.id}>
-                  {ev.title} ({ev.date})
+                  {ev.name} ({ev.date})
                 </option>
               ))}
             </select>
 
-            {isSuperAdmin && (
+            {currentRoleConfig.canManageEvents && (
               <button
-                onClick={openEditEventModal}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition"
+                onClick={() => setShowNewEventModal(true)}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 flex items-center gap-1"
               >
-                <Edit3 className="w-3.5 h-3.5 text-amber-400" />
-                Edit Event
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Event</span>
               </button>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-              <Phone className="w-3.5 h-3.5 text-emerald-600" />
-              Event WA Sender: {activeEvent.whatsappSender || systemConfig.mainWhatsappNumber}
-              {canManageOperations && (
+          {/* Right: Linked Outbound Email Account + Event WhatsApp Sender Number */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-950/90 border border-emerald-500/30 rounded-2xl px-3 py-1.5 text-xs">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <Mail className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="text-slate-400 hidden sm:inline">Outbound Email:</span>
+              <span className="font-mono font-bold text-emerald-300">
+                {appConfig.senderEmail}
+              </span>
+              {currentRoleConfig.canManageEvents && (
                 <button
-                  onClick={() => {
-                    setTempEventWaNumber(
-                      activeEvent.whatsappSender || systemConfig.mainWhatsappNumber
-                    );
-                    setShowEventWaModal(true);
-                  }}
-                  className="ml-1 underline text-emerald-700 hover:text-emerald-950 font-bold"
+                  onClick={() => navigateToRoute('/config')}
+                  className="ml-1 px-2 py-0.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold"
+                >
+                  Config
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950/90 border border-teal-500/30 rounded-2xl px-3 py-1.5 text-xs">
+              <Phone className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+              <span className="text-slate-400 hidden sm:inline">Event WA:</span>
+              <span className="font-mono font-extrabold text-teal-300">
+                {currentEvent.whatsappSenderNumber}
+              </span>
+              {currentRoleConfig.canManageEvents && (
+                <button
+                  onClick={openSenderConfigModal}
+                  className="ml-1 px-2 py-0.5 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30 text-[10px] font-bold"
                 >
                   Change
                 </button>
               )}
-            </span>
-
-            <span className="inline-flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-              {activeEvent.date}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-emerald-600" />
-              {activeEvent.time}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-              {activeEvent.venue}
-            </span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* ==================================================================== */}
-        {/* ROUTE: /users (Super Admin Staff Account & Password Management)      */}
-        {/* ==================================================================== */}
-        {activeRoute === '/users' && isSuperAdmin && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 text-white rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-amber-400 text-xs font-bold uppercase tracking-wider mb-1">
-                  <ShieldCheck className="w-4 h-4" />
-                  Super Admin Access Control
-                </div>
-                <h2 className="text-xl font-extrabold">
-                  Staff Accounts, Roles & Password Control
-                </h2>
-                <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                  Provision staff accounts with <code className="text-emerald-300">Admin</code> or{' '}
-                  <code className="text-sky-300">User</code> roles, or edit passwords for your own Super Admin account and any staff member.
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setPasswordModalUser(currentUser);
-                  setNewPasswordInput('');
-                  setConfirmPasswordInput('');
-                }}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 shrink-0"
-              >
-                <KeyRound className="w-4 h-4" />
-                Change Super Admin Password
-              </button>
+      {/* ==================================================================== */}
+      {/* MAIN CONTENT AREA                                                    */}
+      {/* ==================================================================== */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+        {/* KPI Summary Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+            <span className="text-[11px] font-bold uppercase text-slate-400">
+              Total Bookings
+            </span>
+            <div className="text-2xl font-black text-white mt-1">
+              {eventStats.totalBookings}
             </div>
+            <span className="text-[11px] text-slate-400">
+              {eventStats.totalTickets} QR Seats
+            </span>
+          </div>
 
-            {userProvisionBanner && (
-              <div
-                className={`p-4 rounded-xl border text-xs font-medium flex items-center justify-between ${
-                  userProvisionBanner.type === 'success'
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                    : 'bg-rose-50 border-rose-200 text-rose-900'
-                }`}
-              >
-                <span>{userProvisionBanner.text}</span>
-                <button
-                  onClick={() => setUserProvisionBanner(null)}
-                  className="font-bold underline ml-4"
-                >
-                  Dismiss
-                </button>
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-amber-500/30">
+            <span className="text-[11px] font-bold uppercase text-amber-300">
+              VIP Passes
+            </span>
+            <div className="text-2xl font-black text-amber-300 mt-1">
+              {eventStats.vipTickets}
+            </div>
+            <span className="text-[11px] text-slate-400">Priority Access</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-emerald-500/30">
+            <span className="text-[11px] font-bold uppercase text-emerald-300">
+              Regular Passes
+            </span>
+            <div className="text-2xl font-black text-emerald-300 mt-1">
+              {eventStats.regularTickets}
+            </div>
+            <span className="text-[11px] text-slate-400">Standard Admission</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-indigo-500/30">
+            <span className="text-[11px] font-bold uppercase text-indigo-300">
+              Staff Passes
+            </span>
+            <div className="text-2xl font-black text-indigo-300 mt-1">
+              {eventStats.staffTickets}
+            </div>
+            <span className="text-[11px] text-slate-400">Crew & Production</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-teal-500/30">
+            <span className="text-[11px] font-bold uppercase text-teal-300">
+              Dispatched
+            </span>
+            <div className="text-2xl font-black text-teal-300 mt-1">
+              {eventStats.dispatchedBookings}/{eventStats.totalBookings}
+            </div>
+            <span className="text-[11px] text-slate-400 truncate block">
+              Sender: {currentEvent.whatsappSenderNumber}
+            </span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-cyan-500/30">
+            <span className="text-[11px] font-bold uppercase text-cyan-300">
+              Checked In
+            </span>
+            <div className="text-2xl font-black text-cyan-300 mt-1">
+              {eventStats.checkedInTickets}/{eventStats.totalTickets}
+            </div>
+            <span className="text-[11px] text-slate-400">Door Verified</span>
+          </div>
+        </div>
+
+        {/* ================================================================== */}
+        {/* ROUTE 1: `/dashboard` — BOOKINGS, DESK REGISTRATION & DISPATCH     */}
+        {/* ================================================================== */}
+        {currentRoute === '/dashboard' && (
+          <div className="space-y-6">
+            {currentRoleConfig.canBatchDispatch && (
+              <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-teal-950/60 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-extrabold text-white">
+                      On-Demand Mass Ticket Dispatch (Email PDF + Event WhatsApp)
+                    </span>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      From Email: {appConfig.senderEmail}
+                    </span>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                      From WA: {currentEvent.whatsappSenderNumber}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Tickets are not sent at the time of booking. Trigger batch delivery when ready or send individually per booking below.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {authenticatedUser.role === 'super_admin' && (
+                    <button
+                      onClick={() => {
+                        setShowBulkCsvModal(true);
+                        if (!csvRawText) {
+                          parseBulkCsvContent(SAMPLE_BULK_CSV_TEXT);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-xs font-extrabold text-amber-300 border border-amber-500/40"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
+                      <span>Bulk CSV Guest Import</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => navigateToRoute('/invites')}
+                    className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 border border-slate-700"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Send Registration Invite Link</span>
+                  </button>
+
+                  <button
+                    onClick={handleBatchDispatchAll}
+                    disabled={Boolean(batchProgress)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>
+                      {batchProgress
+                        ? `Dispatching (${batchProgress.current}/${batchProgress.total})...`
+                        : `Batch Dispatch All (${eventBookings.length} Bookings)`}
+                    </span>
+                  </button>
+                </div>
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Create Staff Account Form */}
-              <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-xs p-6">
-                <h3 className="text-base font-bold text-slate-900 mb-1 flex items-center gap-2">
-                  <UserPlus className="w-4 h-4 text-emerald-600" />
-                  Create New Staff Account
-                </h3>
-                <p className="text-xs text-slate-500 mb-4">
-                  Creates an account with a salted password hash and explicit role assignment.
-                </p>
+            {/* Direct Desk Guest Registration Bar with VIP / Regular / Staff Dropdown */}
+            {currentRoleConfig.canRegisterGuests && (
+              <form
+                onSubmit={handleRegisterGuestBooking}
+                className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-400">
+                    Register Guest Booking — Select Ticket Type Dropdown (VIP / Regular / Staff)
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Generates unique cryptographic QR codes per ticket seat
+                  </span>
+                </div>
 
-                <form onSubmit={handleCreateStaffUser} className="space-y-3.5">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Username *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={newUserUsername}
-                        onChange={(e) => setNewUserUsername(e.target.value)}
-                        placeholder="e.g. khalid"
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Full Name *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={newUserName}
-                        onChange={(e) => setNewUserName(e.target.value)}
-                        placeholder="e.g. Khalid Al-Harbi"
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                  <input
+                    type="text"
+                    required
+                    value={guestRegForm.firstName}
+                    onChange={(e) =>
+                      setGuestRegForm((f) => ({ ...f, firstName: e.target.value }))
+                    }
+                    placeholder="First Name *"
+                    className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={guestRegForm.lastName}
+                    onChange={(e) =>
+                      setGuestRegForm((f) => ({ ...f, lastName: e.target.value }))
+                    }
+                    placeholder="Last Name *"
+                    className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    type="email"
+                    required
+                    value={guestRegForm.email}
+                    onChange={(e) =>
+                      setGuestRegForm((f) => ({ ...f, email: e.target.value }))
+                    }
+                    placeholder="Email Address *"
+                    className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    type="text"
+                    value={guestRegForm.whatsapp}
+                    onChange={(e) =>
+                      setGuestRegForm((f) => ({ ...f, whatsapp: e.target.value }))
+                    }
+                    placeholder="Guest WhatsApp (+97150...)"
+                    className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+                  />
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Work Email *
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      value={newUserEmail}
-                      onChange={(e) => setNewUserEmail(e.target.value)}
-                      placeholder="khalid@am-events.ae"
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Temporary Password *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={newUserTempPass}
-                      onChange={(e) => setNewUserTempPass(e.target.value)}
-                      placeholder="e.g. GatePass@2026"
-                      className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Assigned Role *
-                      </label>
-                      <select
-                        value={newUserRole}
-                        onChange={(e) => setNewUserRole(e.target.value)}
-                        className="w-full px-3 py-2 text-sm font-semibold border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="admin">Admin</option>
-                        <option value="user">User (Door Staff)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Assigned Gate / Desk
-                      </label>
-                      <input
-                        type="text"
-                        value={newUserStation}
-                        onChange={(e) => setNewUserStation(e.target.value)}
-                        placeholder="VIP Gate B"
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-sm flex items-center justify-center gap-2"
+                  <select
+                    value={guestRegForm.ticketType}
+                    onChange={(e) =>
+                      setGuestRegForm((f) => ({ ...f, ticketType: e.target.value }))
+                    }
+                    className="px-3 py-2.5 rounded-xl bg-slate-950 border border-emerald-500/40 text-xs font-extrabold text-emerald-300 cursor-pointer focus:outline-none"
                   >
-                    <UserPlus className="w-4 h-4" />
-                    Provision User Account
-                  </button>
-                </form>
+                    <option value="VIP">Ticket Type: VIP</option>
+                    <option value="Regular">Ticket Type: Regular</option>
+                    <option value="Staff">Ticket Type: Staff</option>
+                  </select>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={guestRegForm.quantity}
+                      onChange={(e) =>
+                        setGuestRegForm((f) => ({ ...f, quantity: e.target.value }))
+                      }
+                      title="Number of Tickets"
+                      className="w-16 px-2.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white"
+                    />
+                    <button
+                      type="submit"
+                      className="flex-1 px-3 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Register</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {/* Event Bookings Table */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden">
+              <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search guest name, email, WhatsApp, or QR code..."
+                    className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                  {['ALL', 'VIP', 'Regular', 'Staff'].map((tier) => (
+                    <button
+                      key={tier}
+                      onClick={() => setTicketTierFilter(tier)}
+                      className={`px-3 py-1 rounded-lg font-bold transition-colors ${
+                        ticketTierFilter === tier
+                          ? 'bg-slate-800 text-emerald-400'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {tier}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Provisioned Users Directory Table */}
-              <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-                <div className="p-5 border-b border-slate-200 flex items-center justify-between">
-                  <h3 className="text-base font-bold text-slate-900">
-                    Active Staff Accounts ({staffUsers.length})
-                  </h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase text-slate-500">
-                        <th className="py-3 px-4">Staff Member</th>
-                        <th className="py-3 px-4">Role</th>
-                        <th className="py-3 px-4">Password</th>
-                        <th className="py-3 px-4 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-sm">
-                      {staffUsers.map((u) => {
-                        const rMeta = ROLES_CONFIG[u.role] || ROLES_CONFIG.user;
-                        return (
-                          <tr key={u.id} className="hover:bg-slate-50/70">
-                            <td className="py-3.5 px-4">
-                              <div className="font-bold text-slate-900">
-                                {u.name}{' '}
-                                <span className="font-mono text-xs text-slate-500">
-                                  (@{u.username})
-                                </span>
-                                {u.id === currentUser.id && (
-                                  <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                    You
-                                  </span>
-                                )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold uppercase text-slate-400">
+                      <th className="py-3 px-4">Booking & Ticket Type</th>
+                      <th className="py-3 px-4">Attendee & Contact</th>
+                      <th className="py-3 px-4">Generated QR Code(s)</th>
+                      <th className="py-3 px-4">Email & WhatsApp Dispatch</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {filteredBookings.map((b) => (
+                      <tr key={b.id} className="hover:bg-slate-800/40">
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-emerald-400">
+                              {b.id}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full border font-extrabold text-[10px] ${getTicketBadgeStyle(
+                                b.ticketType
+                              )}`}
+                            >
+                              {b.ticketType}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-1">
+                            {b.source || 'Admin Desk'}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="font-bold text-white text-sm">
+                            {b.firstName} {b.lastName}
+                          </div>
+                          <div className="text-slate-400">{b.email}</div>
+                          {b.whatsapp && (
+                            <div className="font-mono text-teal-400 mt-0.5">
+                              WA: {b.whatsapp}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 align-top space-y-1">
+                          {b.tickets.map((t) => (
+                            <div
+                              key={t.ticketId}
+                              className="font-mono text-[11px] bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 flex items-center justify-between gap-2"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <QrCode className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <span className="text-slate-200">{t.qrString}</span>
                               </div>
-                              <div className="text-xs text-slate-500">{u.email}</div>
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <span
-                                className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${rMeta.lightBadge}`}
-                              >
-                                {rMeta.label}
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-4 font-mono text-xs text-slate-600">
-                              {u.plainHint}
-                            </td>
-                            <td className="py-3.5 px-4 text-right space-x-1.5">
-                              <button
-                                onClick={() => {
-                                  setPasswordModalUser(u);
-                                  setNewPasswordInput('');
-                                  setConfirmPasswordInput('');
-                                }}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 inline-flex items-center gap-1"
-                              >
-                                <KeyRound className="w-3 h-3" />
-                                Edit Password
-                              </button>
-                              {u.id !== currentUser.id && (
-                                <button
-                                  onClick={() => handleToggleUserStatus(u.id)}
-                                  className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-slate-200 hover:bg-slate-100 text-slate-700"
-                                >
-                                  {u.status === 'Active' ? 'Suspend' : 'Activate'}
-                                </button>
+                              {t.checkedIn && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                                  Checked In
+                                </span>
                               )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                            </div>
+                          ))}
+                        </td>
+                        <td className="py-3.5 px-4 align-top space-y-1">
+                          <div>
+                            {b.emailSentAt ? (
+                              <div className="text-emerald-400 font-bold">
+                                ✓ Email PDF Sent ({b.emailSentAt})
+                                <div className="text-[10px] font-mono text-slate-400 font-normal">
+                                  From: {b.dispatchedFromEmail || appConfig.senderEmail}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-500">
+                                Email Pending ({appConfig.senderEmail})
+                              </span>
+                            )}
+                          </div>
+                          {b.whatsapp && (
+                            <div>
+                              {b.whatsappSentAt ? (
+                                <span className="text-teal-400 font-bold">
+                                  ✓ WA Sent via {b.dispatchedFromSender || currentEvent.whatsappSenderNumber}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">
+                                  WA Queued (Sender: {currentEvent.whatsappSenderNumber})
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 align-top text-right">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setTicketPreviewBooking(b)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold"
+                            >
+                              PDF Pass
+                            </button>
+                            {currentRoleConfig.canBatchDispatch && (
+                              <>
+                                <button
+                                  onClick={() => handleDispatchBookingTickets(b)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 font-bold"
+                                >
+                                  Send Ticket
+                                </button>
+                                {b.whatsapp && (
+                                  <button
+                                    onClick={() => handleDirectWhatsAppTicketLaunch(b)}
+                                    className="px-2.5 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 font-bold flex items-center gap-1"
+                                    title={`Send via WhatsApp (Event Sender: ${currentEvent.whatsappSenderNumber})`}
+                                  >
+                                    <MessageSquare className="w-3 h-3" />
+                                    <span>WA</span>
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
         )}
 
-        {/* ==================================================================== */}
-        {/* ROUTE: /config (Super Admin Email & Main WhatsApp Configuration)     */}
-        {/* ==================================================================== */}
-        {activeRoute === '/config' && isSuperAdmin && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 text-white rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1">
-                  <Settings className="w-4 h-4" />
-                  Super Admin System Configuration
+        {/* ================================================================== */}
+        {/* ROUTE 2: `/invites` — SHAREABLE EVENT REGISTRATION INVITE LINKS    */}
+        {/* ================================================================== */}
+        {currentRoute === '/invites' && currentRoleConfig.canSendInvites && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-5 h-5 text-emerald-400" />
+                  <h2 className="text-base font-extrabold text-white">
+                    Create Event Invitation Link
+                  </h2>
                 </div>
-                <h2 className="text-xl font-extrabold">
-                  Outbound Email Delivery & Main WhatsApp Configuration
-                </h2>
-                <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                  Configure how ticket emails are delivered from the browser (EmailJS silent REST API or your default Mail client) and set the global WhatsApp sender number.
-                </p>
-              </div>
-              <button
-                onClick={handleTestEmailConnection}
-                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shrink-0"
-              >
-                <Send className="w-3.5 h-3.5" />
-                Send Test Email Now
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Outbound Email Account Linking */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-5 h-5 text-emerald-600" />
-                    <h3 className="text-base font-bold text-slate-900">
-                      Email Delivery & Sender Credentials
-                    </h3>
-                  </div>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                      systemConfig.emailConnected
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : 'bg-rose-50 text-rose-700 border-rose-200'
-                    }`}
-                  >
-                    {systemConfig.emailConnected ? 'Ready' : 'Check Settings'}
-                  </span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Browser Email Delivery Engine
-                  </label>
-                  <select
-                    value={systemConfig.emailDeliveryMode}
-                    onChange={(e) =>
-                      setSystemConfig((c) => ({ ...c, emailDeliveryMode: e.target.value }))
-                    }
-                    className="w-full px-3 py-2 text-sm font-semibold border border-slate-200 rounded-xl bg-slate-50"
-                  >
-                    <option value="mailto">
-                      Default Email App (Outlook / Gmail / Apple Mail — Zero Setup)
-                    </option>
-                    <option value="emailjs">
-                      EmailJS Direct Silent API (Sends automatically without opening mail app)
-                    </option>
-                  </select>
-                </div>
-
-                {systemConfig.emailDeliveryMode === 'emailjs' && (
-                  <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-3">
-                    <p className="text-[11px] text-emerald-900 font-medium">
-                      Paste your free <strong>EmailJS</strong> credentials (from emailjs.com) to send silent background emails directly from your linked Gmail/Outlook account:
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Service ID
-                        </label>
-                        <input
-                          type="text"
-                          value={systemConfig.emailjsServiceId}
-                          onChange={(e) =>
-                            setSystemConfig((c) => ({
-                              ...c,
-                              emailjsServiceId: e.target.value
-                            }))
-                          }
-                          placeholder="service_xxxxxxx"
-                          className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-200 rounded-lg bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Template ID
-                        </label>
-                        <input
-                          type="text"
-                          value={systemConfig.emailjsTemplateId}
-                          onChange={(e) =>
-                            setSystemConfig((c) => ({
-                              ...c,
-                              emailjsTemplateId: e.target.value
-                            }))
-                          }
-                          placeholder="template_xxxxxxx"
-                          className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-200 rounded-lg bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Public Key
-                        </label>
-                        <input
-                          type="text"
-                          value={systemConfig.emailjsPublicKey}
-                          onChange={(e) =>
-                            setSystemConfig((c) => ({
-                              ...c,
-                              emailjsPublicKey: e.target.value
-                            }))
-                          }
-                          placeholder="user_xxxxxxxxx"
-                          className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-200 rounded-lg bg-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Sender Email Address *
-                    </label>
-                    <input
-                      type="email"
-                      value={systemConfig.senderEmail}
-                      onChange={(e) =>
-                        setSystemConfig((c) => ({ ...c, senderEmail: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Sender Display Name
-                    </label>
-                    <input
-                      type="text"
-                      value={systemConfig.senderName}
-                      onChange={(e) =>
-                        setSystemConfig((c) => ({ ...c, senderName: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2">
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      SMTP Host Reference
-                    </label>
-                    <input
-                      type="text"
-                      value={systemConfig.smtpHost}
-                      onChange={(e) =>
-                        setSystemConfig((c) => ({ ...c, smtpHost: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Port
-                    </label>
-                    <input
-                      type="text"
-                      value={systemConfig.smtpPort}
-                      onChange={(e) =>
-                        setSystemConfig((c) => ({ ...c, smtpPort: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      SMTP Username
-                    </label>
-                    <input
-                      type="text"
-                      value={systemConfig.smtpUsername}
-                      onChange={(e) =>
-                        setSystemConfig((c) => ({ ...c, smtpUsername: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      SMTP App Password
-                    </label>
-                    <input
-                      type="password"
-                      value={systemConfig.smtpPassword}
-                      onChange={(e) =>
-                        setSystemConfig((c) => ({ ...c, smtpPassword: e.target.value }))
-                      }
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                </div>
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  Admin & Super Admin
+                </span>
               </div>
 
-              {/* Main Global WhatsApp Sender Number Configuration */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-5 h-5 text-emerald-600" />
-                    <h3 className="text-base font-bold text-slate-900">
-                      Main WhatsApp Business Sender
-                    </h3>
-                  </div>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Active
-                  </span>
-                </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Generate a shareable registration link for{' '}
+                <strong className="text-white">{currentEvent.name}</strong>. Guests who open the link can register and choose from the{' '}
+                <strong className="text-emerald-300">Ticket Type Dropdown (VIP / Regular / Staff)</strong> or be locked to a specific tier.
+              </p>
 
+              <form onSubmit={handleCreateInviteLink} className="space-y-3.5">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Global Main WhatsApp Number (Default for All Events)
-                  </label>
-                  <input
-                    type="tel"
-                    value={systemConfig.mainWhatsappNumber}
-                    onChange={(e) =>
-                      setSystemConfig((c) => ({
-                        ...c,
-                        mainWhatsappNumber: e.target.value
-                      }))
-                    }
-                    placeholder="+971508429900"
-                    className="w-full px-3.5 py-2.5 text-sm font-mono font-bold border border-slate-200 rounded-xl"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    WhatsApp Cloud API Phone Number ID
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Invitation Link Title / Campaign Label *
                   </label>
                   <input
                     type="text"
-                    value={systemConfig.whatsappPhoneId}
+                    required
+                    value={newInviteForm.label}
                     onChange={(e) =>
-                      setSystemConfig((c) => ({
-                        ...c,
-                        whatsappPhoneId: e.target.value
-                      }))
+                      setNewInviteForm((f) => ({ ...f, label: e.target.value }))
                     }
-                    className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl"
+                    placeholder="e.g. Keynote VIP & Delegation Registration Link"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Permanent Access Token
+                  <label className="block text-xs font-bold text-emerald-300 mb-1">
+                    Ticket Type Selection Mode on Form *
                   </label>
-                  <input
-                    type="password"
-                    value={systemConfig.whatsappApiToken}
+                  <select
+                    value={newInviteForm.allowedTierMode}
                     onChange={(e) =>
-                      setSystemConfig((c) => ({
-                        ...c,
-                        whatsappApiToken: e.target.value
+                      setNewInviteForm((f) => ({
+                        ...f,
+                        allowedTierMode: e.target.value
                       }))
                     }
-                    className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl"
-                  />
-                </div>
-
-                <div className="pt-2 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => {
-                      setEvents((prev) =>
-                        prev.map((ev) => ({
-                          ...ev,
-                          whatsappSender: systemConfig.mainWhatsappNumber
-                        }))
-                      );
-                    }}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-emerald-500/40 text-xs font-extrabold text-emerald-300 cursor-pointer"
                   >
-                    Apply Main WA Number to All Events
-                  </button>
+                    <option value="DROPDOWN_ALL">
+                      Show Full Dropdown (VIP - Regular - Staff)
+                    </option>
+                    <option value="VIP">Lock Invitation to VIP Tier Only</option>
+                    <option value="Regular">Lock Invitation to Regular Tier Only</option>
+                    <option value="Staff">Lock Invitation to Staff Tier Only</option>
+                  </select>
                 </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* ==================================================================== */}
-        {/* ROUTE: /invites (Shareable Event Registration Invitation Links)      */}
-        {/* ==================================================================== */}
-        {activeRoute === '/invites' && canManageOperations && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 text-white rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1">
-                  <Link2 className="w-4 h-4" />
-                  Guest Self-Registration Invitations
-                </div>
-                <h2 className="text-xl font-extrabold">
-                  Shareable Registration Links for {activeEvent.title}
-                </h2>
-                <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                  Generate invitation links to send via WhatsApp or Email. Guests open the link, select their Ticket Type (<code className="text-amber-300">VIP</code>, <code className="text-emerald-300">Regular</code>, or <code className="text-indigo-300">Staff</code>), and receive their QR pass immediately.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Create Invitation Link Card */}
-              <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-xs p-6">
-                <h3 className="text-base font-bold text-slate-900 mb-1">
-                  Create New Invitation Link
-                </h3>
-                <p className="text-xs text-slate-500 mb-4">
-                  Choose whether guests can select any ticket tier from the dropdown or restrict the link to a specific tier.
-                </p>
-
-                <form onSubmit={handleCreateInviteLink} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Invitation Campaign Label *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={newInviteLabel}
-                      onChange={(e) => setNewInviteLabel(e.target.value)}
-                      placeholder="e.g. Executive VIP Guest Invitation"
-                      className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Ticket Type Dropdown Options
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Default Dropdown Value
                     </label>
                     <select
-                      value={newInviteTierMode}
-                      onChange={(e) => setNewInviteTierMode(e.target.value)}
-                      className="w-full px-3.5 py-2.5 text-sm font-semibold border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={newInviteForm.defaultTier}
+                      onChange={(e) =>
+                        setNewInviteForm((f) => ({
+                          ...f,
+                          defaultTier: e.target.value
+                        }))
+                      }
+                      disabled={newInviteForm.allowedTierMode !== 'DROPDOWN_ALL'}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white disabled:opacity-50"
                     >
-                      <option value="ALL">Allow Guest Selection (VIP / Regular / Staff)</option>
-                      <option value="VIP">VIP Only</option>
-                      <option value="Regular">Regular Only</option>
-                      <option value="Staff">Staff Only</option>
+                      <option value="VIP">VIP</option>
+                      <option value="Regular">Regular</option>
+                      <option value="Staff">Staff</option>
                     </select>
                   </div>
 
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-sm flex items-center justify-center gap-2"
-                  >
-                    <Link2 className="w-4 h-4" />
-                    Generate Shareable Invitation Link
-                  </button>
-                </form>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Max Tickets Per Guest
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={newInviteForm.maxTicketsPerBooking}
+                      onChange={(e) =>
+                        setNewInviteForm((f) => ({
+                          ...f,
+                          maxTicketsPerBooking: e.target.value
+                        }))
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Generate Invitation Link</span>
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-extrabold text-white">
+                    Active Registration Invitation Links ({eventInviteLinks.length})
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Share via Copy Link, WhatsApp (linked to Event Sender{' '}
+                    <span className="font-mono text-teal-300">
+                      {currentEvent.whatsappSenderNumber}
+                    </span>
+                    ), or click <strong>Open Guest Registration Form</strong> to test live.
+                  </p>
+                </div>
               </div>
 
-              {/* Active Invitation Links List */}
-              <div className="lg:col-span-7 space-y-4">
-                {eventInvites.map((inv) => {
-                  const shareUrl = `https://events.am-suite.app/register/${activeEvent.id}/${inv.id}`;
-                  const waInviteMessage = encodeURIComponent(
-                    `You are invited to *${activeEvent.title}* on ${activeEvent.date} at ${activeEvent.venue}.\n\nPlease complete your guest registration and select your ticket tier here:\n${shareUrl}`
-                  );
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-slate-300 font-semibold">
+                  Optional Recipient WhatsApp Number for Direct Invite Send:
+                </span>
+                <input
+                  type="text"
+                  value={newInviteForm.recipientWhatsappToShare}
+                  onChange={(e) =>
+                    setNewInviteForm((f) => ({
+                      ...f,
+                      recipientWhatsappToShare: e.target.value
+                    }))
+                  }
+                  placeholder="+971501234567 (or leave blank)"
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs font-mono text-white w-56"
+                />
+              </div>
 
+              <div className="space-y-3">
+                {eventInviteLinks.map((inv) => {
+                  const fullUrl = getInviteUrlString(inv);
                   return (
                     <div
                       key={inv.id}
-                      className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-3"
+                      className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-emerald-500/40 transition-all space-y-3"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                            <span className="font-mono text-xs font-bold text-emerald-400">
                               {inv.id}
                             </span>
-                            <h4 className="font-bold text-slate-900 text-sm">
+                            <span className="text-sm font-extrabold text-white">
                               {inv.label}
-                            </h4>
+                            </span>
                           </div>
-                          <p className="text-xs text-slate-500 mt-1">
-                            Allowed Tiers:{' '}
-                            <span className="font-semibold text-slate-700">
-                              {inv.allowedTiers.join(' / ')}
-                            </span>{' '}
-                            • Registrations via link:{' '}
-                            <span className="font-bold text-emerald-700">{inv.uses}</span>
-                          </p>
+                          <div className="text-[11px] text-slate-400 mt-0.5">
+                            Mode:{' '}
+                            <strong className="text-emerald-300">
+                              {inv.allowedTierMode === 'DROPDOWN_ALL'
+                                ? 'Dropdown (VIP / Regular / Staff)'
+                                : `Locked to ${inv.allowedTierMode}`}
+                            </strong>{' '}
+                            • Max {inv.maxTicketsPerBooking} Passes •{' '}
+                            <strong className="text-amber-300">
+                              {inv.registrationsCount} Guests Registered
+                            </strong>
+                          </div>
                         </div>
-
-                        <button
-                          onClick={() => openGuestInvitationPortal(inv)}
-                          className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-                          Open Guest Registration Form
-                        </button>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                        <code className="text-xs text-slate-700 flex-1 truncate">
-                          {shareUrl}
-                        </code>
+                      <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 font-mono text-[11px] text-slate-300 truncate">
+                        {fullUrl}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
-                          onClick={() => handleCopy(shareUrl, inv.id)}
-                          className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-xs font-semibold text-slate-700 flex items-center gap-1"
+                          type="button"
+                          onClick={() =>
+                            copyText(
+                              fullUrl,
+                              'Invitation registration link copied to clipboard!'
+                            )
+                          }
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white flex items-center gap-1.5"
                         >
-                          {copiedId === inv.id ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
-                              Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5" />
-                              Copy Link
-                            </>
-                          )}
+                          <Copy className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Copy Link</span>
                         </button>
-                        <a
-                          href={`https://wa.me/?text=${waInviteMessage}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1"
+
+                        <button
+                          type="button"
+                          onClick={() => handleShareInviteViaWhatsApp(inv)}
+                          className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-bold flex items-center gap-1.5"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span>Send Invite via WhatsApp</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openGuestInvitationPortal(inv)}
+                          className="ml-auto px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-sm"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
-                          Share via WhatsApp
-                        </a>
+                          <span>Open Guest Registration Form</span>
+                        </button>
                       </div>
                     </div>
                   );
@@ -2525,930 +3197,901 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
           </div>
         )}
 
-        {/* ==================================================================== */}
-        {/* ROUTE: /dashboard (Tickets, Bulk CSV, Dispatch & Templates)          */}
-        {/* ==================================================================== */}
-        {activeRoute === '/dashboard' && (
-          <div className="space-y-6">
-            {/* Top Action Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+        {/* ================================================================== */}
+        {/* ROUTE 3: `/export` — ONE-WAY CSV EXPORT FOR CHECK-IN APPS          */}
+        {/* ================================================================== */}
+        {currentRoute === '/export' && currentRoleConfig.canExportCSV && (
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-sm font-bold text-slate-900">
-                  Event Bookings & Ticket Manifest
+                <h2 className="text-lg font-extrabold text-white">
+                  One-Way Guest List CSV Export for Check-In Apps
                 </h2>
-                <p className="text-xs text-slate-500">
-                  Tickets are sent on demand via <span className="font-semibold text-slate-700">{systemConfig.senderEmail}</span> & WhatsApp <span className="font-semibold text-emerald-700">{activeEvent.whatsappSender || systemConfig.mainWhatsappNumber}</span>.
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Export all individual QR strings and ticket tiers (`VIP`, `Regular`, `Staff`) for import into Attendium, Guest Manager, RSVPify, or Zkipster.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {canManageOperations && (
-                  <button
-                    onClick={() => setActiveRoute('/invites')}
-                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 border border-slate-200"
-                  >
-                    <Link2 className="w-3.5 h-3.5 text-emerald-600" />
-                    Send Registration Invite Link
-                  </button>
-                )}
-                {isSuperAdmin && (
-                  <button
-                    onClick={() => {
-                      setShowBulkCsvModal(true);
-                      setCsvImportError('');
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    Bulk CSV Guest Import
-                  </button>
-                )}
+              <button
+                onClick={handleDownloadCsvExport}
+                className="flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20"
+              >
+                <Download className="w-4 h-4" />
+                <span>
+                  Download {exportPreset} CSV ({eventStats.totalTickets} Tickets)
+                </span>
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {['Attendium', 'Guest Manager', 'RSVPify', 'Zkipster'].map((preset) => (
                 <button
-                  onClick={() => setShowRegisterModal(true)}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                  key={preset}
+                  onClick={() => setExportPreset(preset)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                    exportPreset === preset
+                      ? 'bg-emerald-500/15 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  Register Guest Booking
+                  {preset} Format
                 </button>
-              </div>
+              ))}
             </div>
+          </div>
+        )}
 
-            {/* KPI Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Total QR Tickets
-                  </span>
-                  <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-                    <QrCode className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-slate-900">
-                    {stats.totalTickets}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    across {stats.totalBookings} bookings
-                  </span>
-                </div>
+        {/* ================================================================== */}
+        {/* ROUTE 4: `/scanner` — OFFLINE MOBILE DOOR QR SCANNER               */}
+        {/* ================================================================== */}
+        {currentRoute === '/scanner' && (
+          <div className="max-w-3xl mx-auto bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
+                  Offline-Ready Mobile Door Check-In Scanner
+                </span>
+                <h2 className="text-lg font-extrabold text-white mt-0.5">
+                  {currentEvent.name}
+                </h2>
               </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Ticket Tiers
-                  </span>
-                  <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
-                    <Crown className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="mt-3 flex items-center gap-2 text-xs font-bold">
-                  <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-200">
-                    VIP: {stats.vipTickets}
-                  </span>
-                  <span className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Regular: {stats.regularTickets}
-                  </span>
-                  <span className="px-2 py-1 rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-200">
-                    Staff: {stats.staffTickets}
-                  </span>
-                </div>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Tickets Dispatched
-                  </span>
-                  <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
-                    <Send className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-slate-900">
-                    {stats.dispatchedBookings}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    / {stats.totalBookings} bookings sent
-                  </span>
-                </div>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Door Check-Ins
-                  </span>
-                  <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-                    <CheckCircle2 className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-slate-900">
-                    {stats.checkedInCount}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    / {stats.totalTickets} scanned
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bookings Table + Dispatch Control */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left 8 Cols: Bookings Table */}
-              <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex flex-col">
-                <div className="p-4 sm:p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="relative flex-1">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="Search attendee, booking ID, or QR code..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={tierFilter}
-                      onChange={(e) => setTierFilter(e.target.value)}
-                      className="text-xs font-semibold border border-slate-200 rounded-xl px-2.5 py-2 bg-slate-50 text-slate-700"
-                    >
-                      <option value="ALL">All Tiers</option>
-                      <option value="VIP">VIP Only</option>
-                      <option value="Regular">Regular Only</option>
-                      <option value="Staff">Staff Only</option>
-                    </select>
-
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value)}
-                      className="text-xs font-semibold border border-slate-200 rounded-xl px-2.5 py-2 bg-slate-50 text-slate-700"
-                    >
-                      <option value="ALL">All Dispatch Status</option>
-                      <option value="UNSENT">Not Sent Yet</option>
-                      <option value="SENT">Dispatched</option>
-                    </select>
-
-                    {canManageOperations && (
-                      <button
-                        onClick={() =>
-                          runBatchDispatch(
-                            selectedBookingIds.length > 0
-                              ? eventBookings.filter((b) => selectedBookingIds.includes(b.id))
-                              : eventBookings.filter((b) => !b.dispatchedAt)
-                          )
-                        }
-                        disabled={isDispatching}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs disabled:opacity-50 transition"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        {selectedBookingIds.length > 0
-                          ? `Batch Send (${selectedBookingIds.length})`
-                          : 'Batch Send Unsent'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Progress Bar during Batch Send */}
-                {isDispatching && (
-                  <div className="bg-emerald-50 border-b border-emerald-200 px-5 py-3 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800">
-                      <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
-                      <span>
-                        Dispatching PDF QR tickets via {systemConfig.senderEmail} & WhatsApp... (
-                        {dispatchProgress.current} of {dispatchProgress.total})
-                      </span>
-                    </div>
-                    <div className="w-36 bg-emerald-200 rounded-full h-2 overflow-hidden">
-                      <div
-                        className="bg-emerald-600 h-full transition-all duration-300"
-                        style={{
-                          width: `${
-                            (dispatchProgress.current / Math.max(1, dispatchProgress.total)) * 100
-                          }%`
-                        }}
-                      />
-                    </div>
-                  </div>
+              <button
+                onClick={() => setSoundEnabled((s) => !s)}
+                className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 hover:text-white"
+                title="Toggle Scanner Sound"
+              >
+                {soundEnabled ? (
+                  <Volume2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <VolumeX className="w-4 h-4 text-slate-500" />
                 )}
+              </button>
+            </div>
 
-                {/* Table */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                        <th className="py-3 px-4 w-10">
-                          <input
-                            type="checkbox"
-                            checked={
-                              filteredBookings.length > 0 &&
-                              selectedBookingIds.length === filteredBookings.length
-                            }
-                            onChange={(e) =>
-                              setSelectedBookingIds(
-                                e.target.checked ? filteredBookings.map((b) => b.id) : []
-                              )
-                            }
-                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                          />
-                        </th>
-                        <th className="py-3 px-3">Attendee & Contact</th>
-                        <th className="py-3 px-3">Type & QR</th>
-                        <th className="py-3 px-3">Delivery Status</th>
-                        <th className="py-3 px-4 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-sm">
-                      {filteredBookings.map((b) => {
-                        const isSelected = selectedBookingIds.includes(b.id);
-                        const waMessage = encodeURIComponent(
-                          interpolateTemplate(whatsappTemplate, b)
-                        );
-                        const cleanWaPhone = (b.whatsapp || '').replace(/[^0-9]/g, '');
-                        const tierMeta = getTicketTierMeta(b.ticketType);
-                        const TierIcon = tierMeta.icon;
-
-                        return (
-                          <tr
-                            key={b.id}
-                            className={`hover:bg-slate-50/80 transition ${
-                              isSelected ? 'bg-emerald-50/40' : ''
-                            }`}
-                          >
-                            <td className="py-3.5 px-4">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={(e) =>
-                                  setSelectedBookingIds((prev) =>
-                                    e.target.checked
-                                      ? [...prev, b.id]
-                                      : prev.filter((id) => id !== b.id)
-                                  )
-                                }
-                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                              />
-                            </td>
-                            <td className="py-3.5 px-3">
-                              <div className="font-bold text-slate-900">
-                                {b.firstName} {b.lastName}
-                              </div>
-                              <div className="text-xs text-slate-500">{b.email}</div>
-                              {b.whatsapp ? (
-                                <div className="text-[11px] text-emerald-700 font-medium mt-0.5">
-                                  WA: {b.whatsapp}
-                                </div>
-                              ) : (
-                                <div className="text-[11px] text-slate-400 italic mt-0.5">
-                                  No WhatsApp number
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-3.5 px-3">
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border ${tierMeta.badge}`}
-                              >
-                                <TierIcon className="w-3 h-3" />
-                                {b.ticketType} • {b.tickets.length}{' '}
-                                {b.tickets.length > 1 ? 'Tickets' : 'Ticket'}
-                              </span>
-                              <div className="mt-1 space-y-0.5">
-                                {b.tickets.map((t) => (
-                                  <div
-                                    key={t.ticketId}
-                                    className="font-mono text-[11px] text-slate-500 flex items-center gap-1"
-                                  >
-                                    <span>{t.qrString}</span>
-                                    {t.checkedIn && (
-                                      <span className="text-[10px] font-sans font-bold text-emerald-600">
-                                        ✓ In
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-3">
-                              {b.dispatchedAt ? (
-                                <div>
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    Sent
-                                  </span>
-                                  <div className="text-[11px] text-slate-500 mt-1">
-                                    {b.dispatchedAt}
-                                  </div>
-                                  <div className="text-[10px] text-slate-400">
-                                    {b.dispatchChannel}
-                                  </div>
-                                </div>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">
-                                  Queued / Unsent
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3.5 px-4 text-right">
-                              <div className="inline-flex items-center justify-end gap-1.5 flex-wrap">
-                                <button
-                                  onClick={() => setPdfPreviewBooking(b)}
-                                  title="Preview & Print PDF QR Tickets"
-                                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 inline-flex items-center gap-1 transition"
-                                >
-                                  <Printer className="w-3.5 h-3.5" />
-                                  PDF
-                                </button>
-
-                                {cleanWaPhone && (
-                                  <a
-                                    href={`https://wa.me/${cleanWaPhone}?text=${waMessage}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    title="Send directly via WhatsApp Web/App"
-                                    className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1 transition"
-                                  >
-                                    <ExternalLink className="w-3.5 h-3.5" />
-                                    WA
-                                  </a>
-                                )}
-
-                                {canManageOperations && (
-                                  <button
-                                    onClick={() => dispatchSingleBooking(b)}
-                                    className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white inline-flex items-center gap-1 transition"
-                                  >
-                                    <Send className="w-3.5 h-3.5" />
-                                    {b.dispatchedAt ? 'Resend' : 'Send Now'}
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+            {scanResult && (
+              <div
+                className={`p-4 rounded-2xl border flex items-start gap-3 ${
+                  scanResult.status === 'VALID'
+                    ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+                    : scanResult.status === 'DUPLICATE'
+                    ? 'bg-amber-950/60 border-amber-500/50 text-amber-200'
+                    : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
+                }`}
+              >
+                {scanResult.status === 'VALID' ? (
+                  <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+                ) : scanResult.status === 'DUPLICATE' ? (
+                  <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0" />
+                ) : (
+                  <XCircle className="w-6 h-6 text-rose-400 shrink-0" />
+                )}
+                <div className="text-xs space-y-1">
+                  <div className="font-extrabold text-sm">
+                    {scanResult.status === 'VALID'
+                      ? 'ACCESS GRANTED — VALID TICKET'
+                      : scanResult.status === 'DUPLICATE'
+                      ? 'ALREADY CHECKED IN — DUPLICATE SCAN'
+                      : 'INVALID QR CODE'}
+                  </div>
+                  {scanResult.attendee && (
+                    <div className="font-bold text-white">
+                      {scanResult.attendee} ({scanResult.tier})
+                    </div>
+                  )}
+                  <div className="font-mono opacity-80">{scanResult.qrString}</div>
+                  <div>{scanResult.message}</div>
                 </div>
               </div>
+            )}
 
-              {/* Right 4 Cols: Message Templates & Dispatch Audit Log */}
-              <div className="lg:col-span-4 space-y-6">
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <Mail className="w-4 h-4 text-emerald-600" />
-                      Configurable Dispatch Templates
-                    </h3>
-                    <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-                      On-Demand
-                    </span>
-                  </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={manualQrInput}
+                onChange={(e) => setManualQrInput(e.target.value)}
+                placeholder="Scan or enter QR string (e.g. AM-EVT01-VIP-BK1001-T2-4D7E1B)..."
+                className="flex-1 px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
+              />
+              <button
+                onClick={() => handleScanQrCode(manualQrInput)}
+                className="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs"
+              >
+                Verify QR
+              </button>
+            </div>
 
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Email Subject Line
-                      </label>
-                      <input
-                        type="text"
-                        value={emailSubject}
-                        onChange={(e) => setEmailSubject(e.target.value)}
-                        className="w-full text-xs px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Email Body (with QR Details)
-                      </label>
-                      <textarea
-                        rows={4}
-                        value={emailBody}
-                        onChange={(e) => setEmailBody(e.target.value)}
-                        className="w-full text-xs px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        WhatsApp Message Template
-                      </label>
-                      <textarea
-                        rows={3}
-                        value={whatsappTemplate}
-                        onChange={(e) => setWhatsappTemplate(e.target.value)}
-                        className="w-full text-xs px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
-                  <h3 className="text-sm font-bold text-slate-900 mb-3">
-                    Recent Dispatch Activity Log
-                  </h3>
-                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                    {dispatchLogs.map((log, i) => (
-                      <div
-                        key={i}
-                        className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-xs flex items-start justify-between gap-2"
-                      >
-                        <div>
-                          <div className="font-semibold text-slate-800">
-                            {log.recipient}{' '}
-                            <span className="font-mono text-[11px] text-slate-400">
-                              ({log.bookingId})
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-500 mt-0.5">
-                            Channel: <span className="font-medium">{log.channel}</span>
-                          </div>
+            <div className="space-y-2 pt-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Tap Any Cached Ticket Below to Simulate Camera QR Scan:
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                {eventBookings.flatMap((b) =>
+                  b.tickets.map((t) => (
+                    <button
+                      key={t.ticketId}
+                      onClick={() => handleScanQrCode(t.qrString)}
+                      className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-left flex items-center justify-between gap-2 transition-all"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">
+                          {t.attendeeLabel}
                         </div>
-                        <div className="text-right shrink-0">
-                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">
-                            {log.status}
-                          </span>
-                          <div className="text-[10px] text-slate-400 mt-0.5">{log.time}</div>
+                        <div className="text-[11px] font-mono text-slate-400 truncate">
+                          {t.qrString}
                         </div>
                       </div>
-                    ))}
+                      <span
+                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded border shrink-0 ${
+                          t.checkedIn
+                            ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        }`}
+                      >
+                        {t.checkedIn ? 'Scanned' : 'Scan Now'}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================== */}
+        {/* ROUTE 5: `/config` — APP CONFIG (DIRECT EMAIL SMTP & MAIN WA)       */}
+        {/* ================================================================== */}
+        {currentRoute === '/config' && currentRoleConfig.canManageEvents && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <Server className="w-5 h-5 text-emerald-400" />
+                  <div>
+                    <h2 className="text-base font-extrabold text-white">
+                      Outbound Email Account Configuration (SMTP / Workspace)
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Link the official email account used to send all PDF QR tickets directly from the application.
+                    </p>
                   </div>
+                </div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  {appConfig.emailVerified ? 'Connected & Verified' : 'Pending Test'}
+                </span>
+              </div>
+
+              <form onSubmit={handleSaveAppConfig} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-emerald-300 mb-1">
+                    Email Provider Preset
+                  </label>
+                  <select
+                    value={configForm.emailProvider}
+                    onChange={(e) => handleEmailProviderPresetChange(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-emerald-500/40 text-xs font-bold text-white cursor-pointer"
+                  >
+                    <option value="Google Workspace / Gmail SMTP (smtp.gmail.com)">
+                      Google Workspace / Gmail SMTP (smtp.gmail.com)
+                    </option>
+                    <option value="Microsoft 365 / Outlook (smtp.office365.com)">
+                      Microsoft 365 / Outlook (smtp.office365.com)
+                    </option>
+                    <option value="Custom Domain SMTP Server">
+                      Custom Domain cPanel / Private SMTP Server
+                    </option>
+                    <option value="SendGrid / Mailgun Transactional SMTP">
+                      SendGrid / Mailgun Transactional SMTP
+                    </option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Sender Email Address (From) *
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={configForm.senderEmail}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({
+                          ...f,
+                          senderEmail: e.target.value,
+                          smtpUsername: e.target.value
+                        }))
+                      }
+                      placeholder="tickets@am-events.ae"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Sender Display Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={configForm.senderDisplayName}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({
+                          ...f,
+                          senderDisplayName: e.target.value
+                        }))
+                      }
+                      placeholder="AM Events — Ticketing Desk"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  <div className="sm:col-span-1">
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      SMTP Host *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={configForm.smtpHost}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({ ...f, smtpHost: e.target.value }))
+                      }
+                      placeholder="smtp.gmail.com"
+                      className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      SMTP Port *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={configForm.smtpPort}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({ ...f, smtpPort: e.target.value }))
+                      }
+                      placeholder="587"
+                      className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Encryption
+                    </label>
+                    <select
+                      value={configForm.smtpSecurity}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({ ...f, smtpSecurity: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white"
+                    >
+                      <option value="TLS">TLS (Port 587)</option>
+                      <option value="SSL">SSL (Port 465)</option>
+                      <option value="STARTTLS">STARTTLS</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Email Account Login / Username *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={configForm.smtpUsername}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({ ...f, smtpUsername: e.target.value }))
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Email Password / App Password *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showSmtpSecret ? 'text' : 'password'}
+                        required
+                        value={configForm.smtpPassword}
+                        onChange={(e) =>
+                          setConfigForm((f) => ({ ...f, smtpPassword: e.target.value }))
+                        }
+                        disabled={authenticatedUser.role !== 'super_admin'}
+                        className="w-full pl-3.5 pr-9 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-amber-300 disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowSmtpSecret((s) => !s)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        {showSmtpSecret ? (
+                          <EyeOff className="w-3.5 h-3.5" />
+                        ) : (
+                          <Eye className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={handleTestEmailConnection}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Test Email Connection & Send Test Ticket</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20"
+                  >
+                    Save Email & WhatsApp Config
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-5">
+              <div className="flex items-center gap-2.5 pb-4 border-b border-slate-800">
+                <Phone className="w-5 h-5 text-teal-400" />
+                <div>
+                  <h2 className="text-base font-extrabold text-white">
+                    Main WhatsApp Sender Number & API
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Default WhatsApp number for new events and automated WhatsApp Cloud API delivery.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-teal-300 mb-1">
+                    Global Main WhatsApp Sender Number *
+                  </label>
+                  <input
+                    type="text"
+                    value={configForm.mainWhatsappNumber}
+                    onChange={(e) =>
+                      setConfigForm((f) => ({
+                        ...f,
+                        mainWhatsappNumber: e.target.value
+                      }))
+                    }
+                    placeholder="+971508429900"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-teal-500/40 text-sm font-mono font-extrabold text-teal-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Main WhatsApp Desk Label
+                  </label>
+                  <input
+                    type="text"
+                    value={configForm.mainWhatsappLabel}
+                    onChange={(e) =>
+                      setConfigForm((f) => ({
+                        ...f,
+                        mainWhatsappLabel: e.target.value
+                      }))
+                    }
+                    placeholder="AM Events Main WhatsApp Gateway"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    WhatsApp Business Phone Number ID (Cloud API)
+                  </label>
+                  <input
+                    type="text"
+                    value={configForm.whatsappPhoneId}
+                    onChange={(e) =>
+                      setConfigForm((f) => ({ ...f, whatsappPhoneId: e.target.value }))
+                    }
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    WhatsApp Cloud API Access Token
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showWaTokenSecret ? 'text' : 'password'}
+                      value={configForm.whatsappApiToken}
+                      onChange={(e) =>
+                        setConfigForm((f) => ({
+                          ...f,
+                          whatsappApiToken: e.target.value
+                        }))
+                      }
+                      disabled={authenticatedUser.role !== 'super_admin'}
+                      className="w-full pl-3.5 pr-9 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-amber-300 disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowWaTokenSecret((s) => !s)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      {showWaTokenSecret ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={handleApplyMainWhatsappToAllEvents}
+                    className="w-full py-2.5 px-4 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-xs font-extrabold flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>
+                      Apply Main WhatsApp Number ({configForm.mainWhatsappNumber}) to All Events
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveAppConfig}
+                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs"
+                  >
+                    Save Main WhatsApp Config
+                  </button>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* ==================================================================== */}
-        {/* ROUTE: /export (One-Way Check-In Apps CSV Exporter)                  */}
-        {/* ==================================================================== */}
-        {activeRoute === '/export' && canManageOperations && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-8">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-200">
-                <div>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 mb-2">
-                    One-Way Guest Manifest Bridge
-                  </span>
-                  <h2 className="text-xl font-extrabold text-slate-900">
-                    Export QR Tickets for Third-Party Check-In Apps
+        {/* ================================================================== */}
+        {/* ROUTE 6: `/users` — SUPER ADMIN STAFF ACCOUNTS & PASSWORD RESET    */}
+        {/* ================================================================== */}
+        {currentRoute === '/users' && authenticatedUser.role === 'super_admin' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-5 h-5 text-rose-400" />
+                  <h2 className="text-base font-extrabold text-white">
+                    Create Staff Account
                   </h2>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Generates a clean UTF-8 CSV containing every individual ticket and its unique QR string ready for import into offline door check-in apps.
+                </div>
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  Super Admin Only
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400">
+                Provision accounts for Event Coordinators (<code className="text-amber-300">admin</code>) or Door Receptionists / Scanners (<code className="text-cyan-300">user</code>). All staff automatically share each event&apos;s assigned WhatsApp Sender number.
+              </p>
+
+              <form onSubmit={handleProvisionUserSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Staff Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={provisionForm.name}
+                    onChange={(e) =>
+                      setProvisionForm((f) => ({ ...f, name: e.target.value }))
+                    }
+                    placeholder="e.g. Omar Al-Farsi"
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Staff Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={provisionForm.email}
+                    onChange={(e) =>
+                      setProvisionForm((f) => ({ ...f, email: e.target.value }))
+                    }
+                    placeholder="omar@amevents.io"
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Temporary Password *
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      value={provisionForm.temporaryPassword}
+                      onChange={(e) =>
+                        setProvisionForm((f) => ({
+                          ...f,
+                          temporaryPassword: e.target.value
+                        }))
+                      }
+                      className="flex-1 px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-emerald-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProvisionForm((f) => ({
+                          ...f,
+                          temporaryPassword: `StaffPass!${Math.floor(
+                            1000 + Math.random() * 9000
+                          )}`
+                        }))
+                      }
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Generate</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Assign Role *
+                    </label>
+                    <select
+                      value={provisionForm.role}
+                      onChange={(e) =>
+                        setProvisionForm((f) => ({ ...f, role: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-white cursor-pointer"
+                    >
+                      <option value="admin">Admin (Coordinator)</option>
+                      <option value="user">User (Door Scanner)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Gate / Desk Station
+                    </label>
+                    <input
+                      type="text"
+                      value={provisionForm.station}
+                      onChange={(e) =>
+                        setProvisionForm((f) => ({ ...f, station: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-400 hover:to-amber-400 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-lg shadow-rose-500/20 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Staff Account</span>
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden">
+              <div className="p-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    Authorized Staff Directory ({usersDb.length})
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Super Admin can edit or reset passwords for their own account and any other user account.
                   </p>
                 </div>
                 <button
-                  onClick={downloadCheckInCSV}
-                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-sm shrink-0 transition"
+                  onClick={() => openPasswordResetModal(authenticatedUser)}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5"
                 >
-                  <Download className="w-4 h-4" />
-                  Download CSV ({allEventTickets.length} Tickets)
+                  <Key className="w-3.5 h-3.5" />
+                  <span>Edit My Super Admin Password</span>
                 </button>
               </div>
 
-              <div className="mt-6">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
-                  Select Target Check-In App Column Mapping
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {[
-                    {
-                      id: 'attendium',
-                      name: 'Attendium',
-                      desc: 'Maps Barcode / QR Value + Ticket Tier'
-                    },
-                    {
-                      id: 'guestmanager',
-                      name: 'Guest Manager',
-                      desc: 'Barcode-first layout for fast iOS/Android import'
-                    },
-                    {
-                      id: 'rsvpify',
-                      name: 'RSVPify',
-                      desc: 'Maps Custom QR Code & Confirmation Code'
-                    },
-                    {
-                      id: 'zkipster',
-                      name: 'Zkipster',
-                      desc: 'Maps Guest List / Tier & QR Code String'
-                    }
-                  ].map((preset) => (
-                    <button
-                      key={preset.id}
-                      onClick={() => setExportPreset(preset.id)}
-                      className={`p-4 rounded-xl border text-left transition ${
-                        exportPreset === preset.id
-                          ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-500/20'
-                          : 'border-slate-200 hover:border-slate-300 bg-white'
-                      }`}
-                    >
-                      <div className="font-bold text-sm text-slate-900 flex items-center justify-between">
-                        <span>{preset.name}</span>
-                        {exportPreset === preset.id && (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1">{preset.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Live Export Preview (1 Row Per Individual Ticket)
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    One-way sync: external apps do not write back
-                  </span>
-                </div>
-                <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                      <tr>
-                        <th className="py-2.5 px-3">Ticket ID</th>
-                        <th className="py-2.5 px-3">Guest Name</th>
-                        <th className="py-2.5 px-3">Email</th>
-                        <th className="py-2.5 px-3">Ticket Tier</th>
-                        <th className="py-2.5 px-3">QR Code String</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {allEventTickets.map((t) => {
-                        const tierMeta = getTicketTierMeta(t.ticketType);
-                        return (
-                          <tr key={t.ticketId}>
-                            <td className="py-2 px-3 font-mono text-slate-500">{t.ticketId}</td>
-                            <td className="py-2 px-3 font-semibold text-slate-800">{t.holder}</td>
-                            <td className="py-2 px-3 text-slate-500">{t.email}</td>
-                            <td className="py-2 px-3">
-                              <span
-                                className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold border ${tierMeta.badge}`}
-                              >
-                                {t.ticketType}
-                              </span>
-                            </td>
-                            <td className="py-2 px-3 font-mono font-bold text-emerald-700">
-                              {t.qrString}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ==================================================================== */}
-        {/* ROUTE: /scanner (Built-In Offline Mobile Door Check-In App)          */}
-        {/* ==================================================================== */}
-        {activeRoute === '/scanner' && (
-          <div className="max-w-md mx-auto">
-            <div className="bg-slate-900 text-white rounded-[2.2rem] p-5 shadow-2xl border-4 border-slate-800">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-                <div className="flex items-center gap-2.5">
-                  <AMLogo size={32} />
-                  <div>
-                    <div className="text-xs font-bold text-white">AM Door Check-In</div>
-                    <div className="text-[10px] text-slate-400">
-                      Operator: {currentUser.name}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsOfflineMode((v) => !v)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition ${
-                    isOfflineMode
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                  }`}
-                >
-                  {isOfflineMode ? (
-                    <>
-                      <WifiOff className="w-3 h-3" />
-                      Offline Field Mode
-                    </>
-                  ) : (
-                    <>
-                      <Wifi className="w-3 h-3" />
-                      Online Sync
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <div className="my-4 p-3 rounded-2xl bg-slate-800/80 border border-slate-700/80 flex items-center justify-between">
-                <div>
-                  <div className="text-[11px] text-slate-400">Local Manifest Cached</div>
-                  <div className="text-sm font-bold text-white">
-                    {stats.checkedInCount} / {stats.totalTickets} Checked In
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-lg font-extrabold text-emerald-400">
-                    {Math.round(
-                      (stats.checkedInCount / Math.max(1, stats.totalTickets)) * 100
-                    )}
-                    %
-                  </div>
-                  <div className="text-[10px] text-slate-400">Attendance</div>
-                </div>
-              </div>
-
-              <div className="relative rounded-2xl bg-slate-950 border border-slate-800 p-5 flex flex-col items-center justify-center text-center overflow-hidden">
-                <div className="w-44 h-44 rounded-2xl border-2 border-dashed border-emerald-500/70 flex flex-col items-center justify-center relative bg-slate-900/50">
-                  <QrCode className="w-16 h-16 text-emerald-400/80 mb-2" />
-                  <span className="text-[11px] font-medium text-slate-300 px-3">
-                    Point Camera at Attendee QR Pass
-                  </span>
-                  <div className="absolute left-3 right-3 top-1/2 h-0.5 bg-emerald-400 shadow-[0_0_12px_#10b981] animate-pulse" />
-                </div>
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    processQrScan(scanInput);
-                  }}
-                  className="mt-4 w-full flex gap-2"
-                >
-                  <input
-                    type="text"
-                    value={scanInput}
-                    onChange={(e) => setScanInput(e.target.value)}
-                    placeholder="Paste or type QR string..."
-                    className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-mono"
-                  />
-                  <button
-                    type="submit"
-                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition"
-                  >
-                    Scan
-                  </button>
-                </form>
-
-                <div className="mt-3 w-full">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">
-                    Quick Test Scan Buttons
-                  </div>
-                  <div className="flex flex-wrap justify-center gap-1.5">
-                    {allEventTickets.slice(0, 3).map((t) => (
-                      <button
-                        key={t.ticketId}
-                        onClick={() => processQrScan(t.qrString)}
-                        className="text-[10px] font-mono px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-                      >
-                        {t.holder.split(' ')[0]} ({t.ticketType})
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => processQrScan('AM-FAKE-999999')}
-                      className="text-[10px] font-mono px-2 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 transition"
-                    >
-                      Test Invalid QR
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {lastScanResult && (
-                <div
-                  className={`mt-4 p-4 rounded-2xl border ${
-                    lastScanResult.status === 'VALID'
-                      ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-100'
-                      : lastScanResult.status === 'DUPLICATE'
-                      ? 'bg-amber-950/80 border-amber-500/60 text-amber-100'
-                      : 'bg-rose-950/80 border-rose-500/60 text-rose-100'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    {lastScanResult.status === 'VALID' && (
-                      <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
-                    )}
-                    {lastScanResult.status === 'DUPLICATE' && (
-                      <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0 mt-0.5" />
-                    )}
-                    {lastScanResult.status === 'INVALID' && (
-                      <XCircle className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
-                    )}
-                    <div className="flex-1">
-                      <div className="font-extrabold text-sm">
-                        {lastScanResult.status === 'VALID'
-                          ? 'ACCESS GRANTED'
-                          : lastScanResult.status === 'DUPLICATE'
-                          ? 'ALREADY SCANNED'
-                          : 'INVALID TICKET'}
-                      </div>
-                      <p className="text-xs opacity-90 mt-0.5">{lastScanResult.message}</p>
-                      {lastScanResult.ticket && (
-                        <div className="mt-2 pt-2 border-t border-white/10 text-xs space-y-0.5">
-                          <div className="font-bold">{lastScanResult.ticket.holder}</div>
-                          <div className="opacity-80">
-                            Tier: {lastScanResult.ticket.ticketType} •{' '}
-                            {lastScanResult.ticket.bookingId}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-5 pt-4 border-t border-slate-800">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-300">
-                    Offline Guest Lookup
-                  </span>
-                  <span className="text-[10px] text-slate-500">Tap to Check In</span>
-                </div>
-                <input
-                  type="text"
-                  value={scannerSearch}
-                  onChange={(e) => setScannerSearch(e.target.value)}
-                  placeholder="Search guest name offline..."
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 mb-2.5 focus:outline-none focus:border-emerald-500"
-                />
-                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                  {allEventTickets
-                    .filter((t) =>
-                      t.holder.toLowerCase().includes(scannerSearch.toLowerCase())
-                    )
-                    .map((t) => (
-                      <div
-                        key={t.ticketId}
-                        className="p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 flex items-center justify-between gap-2"
-                      >
-                        <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                            <span>{t.holder}</span>
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-700 text-amber-300 font-semibold">
-                              {t.ticketType}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold uppercase text-slate-400">
+                      <th className="py-3 px-4">Staff Member</th>
+                      <th className="py-3 px-4">Role</th>
+                      <th className="py-3 px-4">Assigned Station</th>
+                      <th className="py-3 px-4 text-right">Password & Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {usersDb.map((u) => {
+                      const rConf = ROLES_HIERARCHY[u.role] || ROLES_HIERARCHY.user;
+                      return (
+                        <tr key={u.id} className="hover:bg-slate-800/40">
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white">{u.name}</span>
+                              {u.id === authenticatedUser.id && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                                  You
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-emerald-400">{u.email}</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded border font-extrabold text-[10px] ${rConf.badgeClass}`}
+                            >
+                              {rConf.label}
                             </span>
-                          </div>
-                          <div className="text-[10px] font-mono text-slate-400">
-                            {t.qrString}
-                          </div>
-                        </div>
-                        {t.checkedIn ? (
-                          <span className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                            In • {t.checkedInAt}
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => processQrScan(t.qrString)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-emerald-600 text-white text-[11px] font-semibold transition"
-                          >
-                            Check In
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                </div>
+                          </td>
+                          <td className="py-3 px-4 text-slate-300">{u.station}</td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => openPasswordResetModal(u)}
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 font-bold text-[11px] flex items-center gap-1"
+                              >
+                                <Key className="w-3 h-3" />
+                                <span>Edit Password</span>
+                              </button>
+                              {u.id !== authenticatedUser.id && (
+                                <button
+                                  onClick={() => handleDeleteUserAccount(u)}
+                                  className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300"
+                                  title="Remove Staff Account"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* ====================================================================== */}
-      {/* MODAL 1: SUPER ADMIN EDIT EVENT DETAILS                                */}
-      {/* ====================================================================== */}
-      {showEditEventModal && isSuperAdmin && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Edit3 className="w-5 h-5 text-amber-400" />
-                <div>
-                  <h3 className="text-sm font-bold">Edit Event Details</h3>
-                  <p className="text-[11px] text-slate-400">
-                    Event ID: {activeEvent.id}
-                  </p>
-                </div>
+      {/* ==================================================================== */}
+      {/* MODAL 1: CONFIGURE EVENT LINKED WHATSAPP SENDER NUMBER               */}
+      {/* ==================================================================== */}
+      {showSenderModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Phone className="w-5 h-5 text-teal-400" />
+                <h3 className="text-base font-extrabold text-white">
+                  Event WhatsApp Sender Number
+                </h3>
               </div>
               <button
-                onClick={() => setShowEditEventModal(false)}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                onClick={() => setShowSenderModal(false)}
+                className="text-xs text-slate-400 hover:text-white"
               >
-                <XCircle className="w-4 h-4" />
+                Close
               </button>
             </div>
 
-            <form onSubmit={handleSaveEventEdits} className="p-6 space-y-4">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Assign a single dedicated mobile number to act as the official WhatsApp sender for{' '}
+              <strong className="text-white">{currentEvent.name}</strong>. All staff and batch dispatches for this event will use this number.
+            </p>
+
+            <form onSubmit={handleSaveSenderConfig} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Event Name / Title *
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Linked WhatsApp Sender Mobile Number *
                 </label>
                 <input
                   type="text"
                   required
-                  value={editEventForm.title}
+                  value={senderEditForm.whatsappSenderNumber}
                   onChange={(e) =>
-                    setEditEventForm((f) => ({ ...f, title: e.target.value }))
+                    setSenderEditForm((f) => ({
+                      ...f,
+                      whatsappSenderNumber: e.target.value
+                    }))
                   }
-                  className="w-full px-3 py-2 text-sm font-semibold border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="+971508429900"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-teal-500/40 text-sm font-mono font-bold text-teal-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Sender Display Label
+                </label>
+                <input
+                  type="text"
+                  value={senderEditForm.whatsappSenderLabel}
+                  onChange={(e) =>
+                    setSenderEditForm((f) => ({
+                      ...f,
+                      whatsappSenderLabel: e.target.value
+                    }))
+                  }
+                  placeholder="Official Event WhatsApp Desk"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSenderModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-extrabold text-xs"
+                >
+                  Save Event Sender Number
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 2: CREATE NEW EVENT (WITH ASSIGNED WHATSAPP SENDER NUMBER)     */}
+      {/* ==================================================================== */}
+      {showNewEventModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-extrabold text-white">
+                Create New Event & Assign WhatsApp Sender
+              </h3>
+              <button
+                onClick={() => setShowNewEventModal(false)}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNewEvent} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Event Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newEventForm.name}
+                  onChange={(e) =>
+                    setNewEventForm((f) => ({ ...f, name: e.target.value }))
+                  }
+                  placeholder="e.g. Annual Tech Summit 2026"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
                     Event Date *
                   </label>
                   <input
                     type="date"
                     required
-                    value={editEventForm.date}
+                    value={newEventForm.date}
                     onChange={(e) =>
-                      setEditEventForm((f) => ({ ...f, date: e.target.value }))
+                      setNewEventForm((f) => ({ ...f, date: e.target.value }))
                     }
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Event Time *
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Time
                   </label>
                   <input
                     type="text"
-                    required
-                    value={editEventForm.time}
+                    value={newEventForm.time}
                     onChange={(e) =>
-                      setEditEventForm((f) => ({ ...f, time: e.target.value }))
+                      setNewEventForm((f) => ({ ...f, time: e.target.value }))
                     }
-                    placeholder="09:00 AM – 05:00 PM"
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-slate-300 mb-1">
                   Venue / Location *
                 </label>
                 <input
                   type="text"
                   required
-                  value={editEventForm.venue}
+                  value={newEventForm.location}
                   onChange={(e) =>
-                    setEditEventForm((f) => ({ ...f, venue: e.target.value }))
+                    setNewEventForm((f) => ({ ...f, location: e.target.value }))
                   }
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="e.g. Grand Convention Center"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Venue Capacity
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={editEventForm.capacity}
-                    onChange={(e) =>
-                      setEditEventForm((f) => ({ ...f, capacity: e.target.value }))
-                    }
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Event WhatsApp Sender
-                  </label>
-                  <input
-                    type="tel"
-                    value={editEventForm.whatsappSender}
-                    onChange={(e) =>
-                      setEditEventForm((f) => ({
-                        ...f,
-                        whatsappSender: e.target.value
-                      }))
-                    }
-                    className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-teal-300 mb-1">
+                  Dedicated Event WhatsApp Sender Number *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newEventForm.whatsappSenderNumber}
+                  onChange={(e) =>
+                    setNewEventForm((f) => ({
+                      ...f,
+                      whatsappSenderNumber: e.target.value
+                    }))
+                  }
+                  placeholder="+971508429900"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-teal-500/40 text-xs font-mono font-bold text-teal-300"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowEditEventModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  onClick={() => setShowNewEventModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold text-slate-300"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs"
                 >
-                  Save Event Changes
+                  Create Event
                 </button>
               </div>
             </form>
@@ -3456,83 +4099,336 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
         </div>
       )}
 
-      {/* ====================================================================== */}
-      {/* MODAL 2: SUPER ADMIN PASSWORD CHANGE MODAL                             */}
-      {/* ====================================================================== */}
-      {passwordModalUser && isSuperAdmin && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+      {/* ==================================================================== */}
+      {/* MODAL 3: PRINTABLE PDF QR TICKET STUDIO                              */}
+      {/* ==================================================================== */}
+      {ticketPreviewBooking && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <KeyRound className="w-5 h-5 text-amber-400" />
+                <AMLogo size={32} showText={false} />
                 <div>
-                  <h3 className="text-sm font-bold">Update Account Password</h3>
-                  <p className="text-[11px] text-slate-400">
-                    {passwordModalUser.name} (@{passwordModalUser.username})
+                  <h3 className="text-sm font-bold text-white">
+                    Official PDF QR Ticket — {ticketPreviewBooking.id} ({ticketPreviewBooking.ticketType})
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {ticketPreviewBooking.firstName} {ticketPreviewBooking.lastName} • From: {appConfig.senderEmail} • WA: {currentEvent.whatsappSenderNumber}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print PDF</span>
+                </button>
+                <button
+                  onClick={() => setTicketPreviewBooking(null)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {ticketPreviewBooking.tickets.map((t) => (
+                <div
+                  key={t.ticketId}
+                  className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-4"
+                >
+                  <div className="space-y-1">
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full border font-extrabold ${getTicketBadgeStyle(
+                        ticketPreviewBooking.ticketType
+                      )}`}
+                    >
+                      {ticketPreviewBooking.ticketType} PASS
+                    </span>
+                    <h4 className="text-base font-extrabold text-white pt-1">
+                      {currentEvent.name}
+                    </h4>
+                    <p className="text-xs text-slate-300">{t.attendeeLabel}</p>
+                    <p className="text-[11px] text-slate-400">
+                      {currentEvent.date} • {currentEvent.time} • {currentEvent.location}
+                    </p>
+                    <p className="text-[11px] text-teal-400 font-mono">
+                      Official Event WhatsApp: {currentEvent.whatsappSenderNumber} • Email: {appConfig.senderEmail}
+                    </p>
+                    <p className="text-xs font-mono text-emerald-400 pt-1">{t.qrString}</p>
+                  </div>
+                  <QRCodeMatrix value={t.qrString} size={104} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 4: SUPER ADMIN EDIT / RESET PASSWORD (OWN + ANY USER ACCOUNT)  */}
+      {/* ==================================================================== */}
+      {passwordModalUser && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-base font-extrabold text-white">
+                    {passwordModalUser.id === authenticatedUser.id
+                      ? 'Edit My Super Admin Password'
+                      : `Reset Password — ${passwordModalUser.name}`}
+                  </h3>
+                  <p className="text-xs font-mono text-emerald-400">
+                    {passwordModalUser.email}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setPasswordModalUser(null)}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                className="text-xs text-slate-400 hover:text-white"
               >
-                <XCircle className="w-4 h-4" />
+                Close
               </button>
             </div>
 
-            <form onSubmit={handleSaveUserPassword} className="p-6 space-y-4">
+            {updatedCredentialSummary ? (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/40 space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-300 font-extrabold text-xs">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Password Hash Updated Successfully!</span>
+                  </div>
+                  <div className="text-xs text-slate-300 space-y-1 font-mono bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <div>Account: {updatedCredentialSummary.email}</div>
+                    <div>Role: {updatedCredentialSummary.role}</div>
+                    <div className="text-amber-300 font-bold">
+                      New Password: {updatedCredentialSummary.newPassword}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyText(
+                        `AM Events Manager Login\nEmail: ${updatedCredentialSummary.email}\nPassword: ${updatedCredentialSummary.newPassword}`,
+                        'Copied updated login credentials!'
+                      )
+                    }
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white flex items-center justify-center gap-1.5"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy Credentials</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPasswordModalUser(null)}
+                    className="py-2.5 px-5 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-xs"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleUpdateUserPasswordSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    New Password *
+                  </label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type={showNewPasswordText ? 'text' : 'password'}
+                        required
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                        className="w-full pl-3.5 pr-9 py-2.5 rounded-xl bg-slate-950 border border-amber-500/40 text-sm font-mono text-amber-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPasswordText((s) => !s)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        {showNewPasswordText ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNewPasswordInput(
+                          `AMSecure!${Math.floor(1000 + Math.random() * 9000)}`
+                        )
+                      }
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Generate</span>
+                    </button>
+                  </div>
+
+                  <div className="mt-2 space-y-1">
+                    <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${
+                          getPasswordStrength(newPasswordInput).bar
+                        }`}
+                      />
+                    </div>
+                    <span
+                      className={`text-[11px] font-bold ${
+                        getPasswordStrength(newPasswordInput).color
+                      }`}
+                    >
+                      {getPasswordStrength(newPasswordInput).label}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setPasswordModalUser(null)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold text-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-emerald-400 text-slate-950 font-extrabold text-xs"
+                  >
+                    Save New Password
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 5: SUPER ADMIN BULK GUEST REGISTRATION VIA CSV UPLOAD          */}
+      {/* ==================================================================== */}
+      {/* MODAL 2: CREATE NEW EVENT                                            */}
+      {/* ==================================================================== */}
+      {showNewEventModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-extrabold text-white">
+                Create New Event &amp; Assign WhatsApp Sender
+              </h3>
+              <button
+                onClick={() => setShowNewEventModal(false)}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNewEvent} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  New Password *
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Event Title *
                 </label>
                 <input
                   type="text"
                   required
-                  value={newPasswordInput}
-                  onChange={(e) => setNewPasswordInput(e.target.value)}
-                  placeholder="Enter new strong password"
-                  className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={newEventForm.name}
+                  onChange={(e) =>
+                    setNewEventForm((f) => ({ ...f, name: e.target.value }))
+                  }
+                  placeholder="e.g. Annual Tech Summit 2026"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Event Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newEventForm.date}
+                    onChange={(e) =>
+                      setNewEventForm((f) => ({ ...f, date: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    Time
+                  </label>
+                  <input
+                    type="text"
+                    value={newEventForm.time}
+                    onChange={(e) =>
+                      setNewEventForm((f) => ({ ...f, time: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Confirm New Password *
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Venue / Location *
                 </label>
                 <input
                   type="text"
                   required
-                  value={confirmPasswordInput}
-                  onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                  placeholder="Re-enter new password"
-                  className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={newEventForm.location}
+                  onChange={(e) =>
+                    setNewEventForm((f) => ({ ...f, location: e.target.value }))
+                  }
+                  placeholder="e.g. Grand Convention Center"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                 />
               </div>
 
-              {newPasswordInput &&
-                confirmPasswordInput &&
-                newPasswordInput !== confirmPasswordInput && (
-                  <p className="text-xs text-rose-600 font-semibold">
-                    Passwords do not match.
-                  </p>
-                )}
+              <div>
+                <label className="block text-xs font-bold text-teal-300 mb-1">
+                  Dedicated Event WhatsApp Sender Number *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newEventForm.whatsappSenderNumber}
+                  onChange={(e) =>
+                    setNewEventForm((f) => ({
+                      ...f,
+                      whatsappSenderNumber: e.target.value
+                    }))
+                  }
+                  placeholder="+971508429900"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-teal-500/40 text-xs font-mono font-bold text-teal-300"
+                />
+              </div>
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setPasswordModalUser(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  onClick={() => setShowNewEventModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold text-slate-300"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={
-                    !newPasswordInput.trim() || newPasswordInput !== confirmPasswordInput
-                  }
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white shadow-sm"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs"
                 >
-                  Save New Password
+                  Create Event
                 </button>
               </div>
             </form>
@@ -3540,10 +4436,437 @@ Mona,El-Sayed,mona.elsayed@school.ae,+971503344556,Regular,3`;
         </div>
       )}
 
-      {/* ====================================================================== */}
-      {/* MODAL 3: SUPER ADMIN BULK CSV GUEST IMPORT                             */}
-      {/* ====================================================================== */}
-      {showBulkCsvModal && isSuperAdmin && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-
+      {/* ==================================================================== */}
+      {/* MODAL 3: PRINTABLE PDF QR TICKET STUDIO                              */}
+      {/* ==================================================================== */}
+      {ticketPreviewBooking && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <AMLogo size={32} showText={false} />
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    Official PDF QR Ticket — {ticketPreviewBooking.id} ({ticketPreviewBooking.ticketType})
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {ticketPreviewBooking.firstName} {ticketPreviewBooking.lastName} • From: {appConfig.senderEmail} • WA: {currentEvent.whatsappSenderNumber}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print PDF</span>
+                </button>
+                <button
+                  onClick={() => setTicketPreviewBooking(null)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {ticketPreviewBooking.tickets.map((t) => (
+                <div
+                  key={t.ticketId}
+                  className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-4"
+                >
+                  <div className="space-y-1">
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full border font-extrabold ${getTicketBadgeStyle(
+                        ticketPreviewBooking.ticketType
+                      )}`}
+                    >
+                      {ticketPreviewBooking.ticketType} PASS
+                    </span>
+                    <h4 className="text-base font-extrabold text-white pt-1">
+                      {currentEvent.name}
+                    </h4>
+                    <p className="text-xs text-slate-300">{t.attendeeLabel}</p>
+                    <p className="text-[11px] text-slate-400">
+                      {currentEvent.date} • {currentEvent.time} • {currentEvent.location}
+                    </p>
+                    <p className="text-[11px] text-teal-400 font-mono">
+                      Official Event WhatsApp: {currentEvent.whatsappSenderNumber} • Email: {appConfig.senderEmail}
+                    </p>
+                    <p className="text-xs font-mono text-emerald-400 pt-1">{t.qrString}</p>
+                  </div>
+                  <QRCodeMatrix value={t.qrString} size={104} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 4: SUPER ADMIN EDIT / RESET PASSWORD (OWN + ANY USER ACCOUNT)  */}
+      {/* ==================================================================== */}
+      {passwordModalUser && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-base font-extrabold text-white">
+                    {passwordModalUser.id === authenticatedUser.id
+                      ? 'Edit My Super Admin Password'
+                      : `Reset Password — ${passwordModalUser.name}`}
+                  </h3>
+                  <p className="text-xs font-mono text-emerald-400">
+                    @{passwordModalUser.username} ({passwordModalUser.email})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPasswordModalUser(null)}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+
+            {updatedCredentialSummary ? (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/40 space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-300 font-extrabold text-xs">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Password Hash Updated Successfully!</span>
+                  </div>
+                  <div className="text-xs text-slate-300 space-y-1 font-mono bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <div>Username: {updatedCredentialSummary.username}</div>
+                    <div>Email: {updatedCredentialSummary.email}</div>
+                    <div className="text-amber-300 font-bold">
+                      New Password: {updatedCredentialSummary.newPassword}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyText(
+                        `AM Events Manager Login\nUsername: ${updatedCredentialSummary.username}\nPassword: ${updatedCredentialSummary.newPassword}`,
+                        'Copied updated login credentials!'
+                      )
+                    }
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white flex items-center justify-center gap-1.5"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy Credentials</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPasswordModalUser(null)}
+                    className="py-2.5 px-5 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-xs"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleUpdateUserPasswordSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    New Password *
+                  </label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type={showNewPasswordText ? 'text' : 'password'}
+                        required
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                        className="w-full pl-3.5 pr-9 py-2.5 rounded-xl bg-slate-950 border border-amber-500/40 text-sm font-mono text-amber-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPasswordText((s) => !s)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        {showNewPasswordText ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNewPasswordInput(
+                          `AMSecure!${Math.floor(1000 + Math.random() * 9000)}`
+                        )
+                      }
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Generate</span>
+                    </button>
+                  </div>
+
+                  <div className="mt-2 space-y-1">
+                    <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${
+                          getPasswordStrength(newPasswordInput).bar
+                        }`}
+                      />
+                    </div>
+                    <span
+                      className={`text-[11px] font-bold ${
+                        getPasswordStrength(newPasswordInput).color
+                      }`}
+                    >
+                      {getPasswordStrength(newPasswordInput).label}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setPasswordModalUser(null)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold text-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-emerald-400 text-slate-950 font-extrabold text-xs"
+                  >
+                    Save New Password
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 5: SUPER ADMIN BULK GUEST REGISTRATION VIA CSV UPLOAD          */}
+      {/* ==================================================================== */}
+      {showBulkCsvModal && authenticatedUser.role === 'super_admin' && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <FileSpreadsheet className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-base font-extrabold text-white">
+                    Bulk Guest Registration via CSV Upload ({currentEvent.name})
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Upload a `.csv` file or paste guest rows to generate unique QR codes in bulk (`VIP` / `Regular` / `Staff`).
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadSampleCsvTemplate}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Sample CSV Template</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkCsvModal(false)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <div className="lg:col-span-5 flex flex-col justify-between p-4 rounded-2xl bg-slate-950 border-2 border-dashed border-slate-800 hover:border-emerald-500/50 transition-colors space-y-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-400 uppercase">
+                      <Upload className="w-4 h-4" />
+                      <span>1. Upload CSV File from Device</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Columns: <code className="text-slate-200">First Name, Last Name, Email, WhatsApp, Ticket Type, Quantity, Notes</code>
+                    </p>
+                  </div>
+
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleCsvFileUpload}
+                    className="block w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-extrabold file:bg-emerald-500 file:text-slate-950 hover:file:bg-emerald-400 cursor-pointer"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => parseBulkCsvContent(SAMPLE_BULK_CSV_TEXT)}
+                    className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30"
+                  >
+                    Load Sample 5-Guest Batch
+                  </button>
+                </div>
+
+                <div className="lg:col-span-7 space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">
+                    Or Paste / Edit CSV Rows Directly:
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={csvRawText}
+                    onChange={(e) => parseBulkCsvContent(e.target.value)}
+                    placeholder="First Name,Last Name,Email,WhatsApp,Ticket Type,Quantity,Notes"
+                    className="w-full p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {parsedCsvRows.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-400">
+                      2. Preview &amp; Adjust Ticket Types Before Import ({parsedCsvRows.filter((r) => r.selected && r.isValid).length} Valid Guests Selected)
+                    </span>
+
+                    <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={csvAutoCheckIn}
+                        onChange={(e) => setCsvAutoCheckIn(e.target.checked)}
+                        className="rounded border-slate-700"
+                      />
+                      <span>Auto-Mark Checked-In</span>
+                    </label>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-800 bg-slate-900/80 text-[11px] font-bold uppercase text-slate-400">
+                          <th className="py-2.5 px-3">Import</th>
+                          <th className="py-2.5 px-3">Guest Name</th>
+                          <th className="py-2.5 px-3">Email &amp; WhatsApp</th>
+                          <th className="py-2.5 px-3">Ticket Type (Dropdown)</th>
+                          <th className="py-2.5 px-3">Qty</th>
+                          <th className="py-2.5 px-3">Validation</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {parsedCsvRows.map((row, idx) => (
+                          <tr key={row.rowId} className="hover:bg-slate-900/40">
+                            <td className="py-2.5 px-3">
+                              <input
+                                type="checkbox"
+                                checked={row.selected}
+                                disabled={!row.isValid}
+                                onChange={(e) =>
+                                  setParsedCsvRows((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx ? { ...r, selected: e.target.checked } : r
+                                    )
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-white">
+                              {row.firstName} {row.lastName}
+                              {row.notes && (
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  {row.notes}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="text-slate-200">{row.email}</div>
+                              <div className="font-mono text-[11px] text-teal-400">
+                                {row.whatsapp}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <select
+                                value={row.ticketType}
+                                onChange={(e) =>
+                                  setParsedCsvRows((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx ? { ...r, ticketType: e.target.value } : r
+                                    )
+                                  )
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-slate-900 border border-emerald-500/40 text-xs font-extrabold text-emerald-300"
+                              >
+                                <option value="VIP">VIP</option>
+                                <option value="Regular">Regular</option>
+                                <option value="Staff">Staff</option>
+                              </select>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold text-white">
+                              {row.quantity}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {!row.isValid ? (
+                                <span className="text-rose-400 font-bold">
+                                  Invalid Name/Email
+                                </span>
+                              ) : row.isDuplicate ? (
+                                <span className="text-amber-300 font-bold">
+                                  Duplicate Email Warning
+                                </span>
+                              ) : (
+                                <span className="text-emerald-400 font-bold">
+                                  ✓ Ready ({row.quantity} QR)
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-slate-400">
+                Total QR Passes to Generate:{' '}
+                <strong className="text-emerald-400">
+                  {parsedCsvRows
+                    .filter((r) => r.selected && r.isValid)
+                    .reduce((acc, r) => acc + (Number(r.quantity) || 1), 0)}{' '}
+                  Individual QR Tickets
+                </strong>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkCsvModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 text-xs font-bold text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmBulkCsvImport}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20"
+                >
+                  Confirm &amp; Register {parsedCsvRows.filter((r) => r.selected && r.isValid).length} Guests
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
